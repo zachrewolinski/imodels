@@ -66,7 +66,8 @@ class ForestMDIPlus:
 
     def __init__(self, estimators, transformers, scoring_fns, local_scoring_fns=False,
                  sample_split="loo", tree_random_states=None, mode="keep_k",
-                 task="regression", center=True, normalize=False):
+                 task="regression", center=True, normalize=False,version="tiffany"):
+        assert version == "tiffany" or version == "zach"
         assert sample_split in ["loo", "oob", "inbag", None]
         assert mode in ["keep_k", "keep_rest"]
         assert task in ["regression", "classification"]
@@ -83,6 +84,7 @@ class ForestMDIPlus:
         self.task = task
         self.center = center
         self.normalize = normalize
+        self.version = version
         if self.local_scoring_fns and self.mode == "keep_rest":
             raise ValueError("Local feature importances have not yet been implemented when mode='keep_rest'.")
         if not isinstance(self.local_scoring_fns, bool):
@@ -206,7 +208,8 @@ class ForestMDIPlus:
                                         mode=self.mode,
                                         task=self.task,
                                         center=self.center,
-                                        normalize=self.normalize)
+                                        normalize=self.normalize,
+                                        version=self.version)
             scores = tree_mdi_plus.get_scores(X, y)
             if scores is not None:
                 if self.local_scoring_fns:
@@ -302,13 +305,15 @@ class TreeMDIPlus:
 
     def __init__(self, estimator, transformer, scoring_fns, local_scoring_fns=False,
                  sample_split="loo", tree_random_state=None, mode="keep_k",
-                 task="regression", center=True, normalize=False):
+                 task="regression", center=True, normalize=False,version="tiffany"):
+        assert version == "tiffany" or version == "zach"
         assert sample_split in ["loo", "oob", "inbag", "auto", None]
         assert mode in ["keep_k", "keep_rest"]
         assert task in ["regression", "classification"]
         print("CREATING TREE MDI PLUS OBJECT")
         self.estimator = estimator
         self.transformer = transformer
+        self.version = version
         self.scoring_fns = scoring_fns
         self.local_scoring_fns = local_scoring_fns
         self.sample_split = sample_split
@@ -366,11 +371,18 @@ class TreeMDIPlus:
     def _fit_importance_scores(self, X, y):
         print("IN '_fit_importance_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
         n_samples = y.shape[0]
-        blocked_data, zero_values = self.transformer.transform(X,
-                                                  center=self.center,
-                                                  normalize=self.normalize,
-                                                  zeros=True)
-        print("ZERO VALUES:", zero_values)
+        zero_values = None
+        if self.version == "zach":
+            blocked_data, zero_values = self.transformer.transform(X,
+                                                    center=self.center,
+                                                    normalize=self.normalize,
+                                                    zeros=True)
+        else:
+            blocked_data = self.transformer.transform(X,
+                                                    center=self.center,
+                                                    normalize=self.normalize,
+                                                    zeros=False)
+        # print("ZERO VALUES:", zero_values)
         self.n_features = blocked_data.n_blocks
         zach_dat = blocked_data.get_all_data()
         print("blocked data shape:", zach_dat.shape)
