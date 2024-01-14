@@ -45,7 +45,7 @@ class BlockPartitionedData:
         else:
             all_data = np.hstack(self._data_blocks + [self._common_block])
             # Common block appended at the end
-        print("GETTING ALL DATA, SHAPE:", all_data.shape)
+        # print("GETTING ALL DATA, SHAPE:", all_data.shape)
         return all_data
 
     def _create_block_indices(self):
@@ -267,8 +267,8 @@ class BlockTransformerBase(ABC):
             The block of engineered features associated with the original
             feature with index k.
         """
-        if zeros:
-            print("ZEROS IN transform_one_feature")
+        # if zeros:
+        #     print("ZEROS IN transform_one_feature")
         data_block = self._transform_one_feature(X, k)
         if zeros:
             data_block, zero_value = self._center_and_normalize(data_block, k, center, normalize, zeros=zeros)
@@ -302,8 +302,8 @@ class BlockTransformerBase(ABC):
         blocked_data: BlockPartitionedData object
             The transformed data
         """
-        if zeros:
-            print("ZEROS IN transform")
+        # if zeros:
+        #     print("ZEROS IN transform")
         self.check_is_fitted()
         n_features = X.shape[1]
         data_blocks = []
@@ -394,8 +394,8 @@ class BlockTransformerBase(ABC):
         return self._transform_one_feature(X, k)
 
     def _center_and_normalize(self, data_block, k, center=True, normalize=False, zeros=False):
-        if zeros:
-            print("ZEROS IN _center_and_normalize")
+        # if zeros:
+        #     print("ZEROS IN _center_and_normalize")
         if center:
             data_block = data_block - self._centers[k]
             zero_value = np.zeros(data_block.shape[1]) - self._centers[k]

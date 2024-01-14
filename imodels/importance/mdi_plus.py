@@ -71,7 +71,7 @@ class ForestMDIPlus:
         assert sample_split in ["loo", "oob", "inbag", None]
         assert mode in ["keep_k", "keep_rest"]
         assert task in ["regression", "classification"]
-        print("CREATING FOREST MDI PLUS OBJECT")
+        # print("CREATING FOREST MDI PLUS OBJECT")
         self.estimators = estimators
         self.transformers = transformers
         self.scoring_fns = scoring_fns
@@ -121,7 +121,7 @@ class ForestMDIPlus:
         scores: pd.DataFrame of shape (n_features, n_scoring_fns)
             The MDI+ feature importances.
         """
-        print("IN 'get_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
+        # print("IN 'get_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
         self._fit_importance_scores(X, y)
         if self.local_scoring_fns:
             return {"global": self.feature_importances_,
@@ -162,7 +162,7 @@ class ForestMDIPlus:
             The stability scores of the MDI+ feature rankings across bootstrapped samples.
 
         """
-        print("IN 'get_stability_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
+        # print("IN 'get_stability_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
         if metrics == "auto":
             metrics = {"RBO": partial(rbo, p=0.9), "tauAP": tauAP_b}
         elif not isinstance(metrics, dict):
@@ -191,12 +191,12 @@ class ForestMDIPlus:
         return stability_df
 
     def _fit_importance_scores(self, X, y):
-        print("IN '_fit_importance_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
+        # print("IN '_fit_importance_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
         all_scores = []
         all_full_preds = []
         all_local_scores = []
-        print("RF+ _fit_importance_scores X Shape:", X.shape)
-        print("RF+ _fit_importance_scores X:", X)
+        # print("RF+ _fit_importance_scores X Shape:", X.shape)
+        # print("RF+ _fit_importance_scores X:", X)
         for estimator, transformer, tree_random_state in \
                 zip(self.estimators, self.transformers, self.tree_random_states):
             tree_mdi_plus = TreeMDIPlus(estimator=estimator,
@@ -310,7 +310,7 @@ class TreeMDIPlus:
         assert sample_split in ["loo", "oob", "inbag", "auto", None]
         assert mode in ["keep_k", "keep_rest"]
         assert task in ["regression", "classification"]
-        print("CREATING TREE MDI PLUS OBJECT")
+        # print("CREATING TREE MDI PLUS OBJECT")
         self.estimator = estimator
         self.transformer = transformer
         self.version = version
@@ -360,7 +360,7 @@ class TreeMDIPlus:
         scores: pd.DataFrame of shape (n_features, n_scoring_fns)
             The MDI+ feature importances.
         """
-        print("IN 'get_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+        # print("IN 'get_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
         self._fit_importance_scores(X, y)
         if self.local_scoring_fns:
             return {"global": self.feature_importances_,
@@ -369,7 +369,7 @@ class TreeMDIPlus:
             return self.feature_importances_
 
     def _fit_importance_scores(self, X, y):
-        print("IN '_fit_importance_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+        # print("IN '_fit_importance_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
         n_samples = y.shape[0]
         zero_values = None
         if self.version == "zach":
@@ -385,25 +385,25 @@ class TreeMDIPlus:
         # print("ZERO VALUES:", zero_values)
         self.n_features = blocked_data.n_blocks
         zach_dat = blocked_data.get_all_data()
-        print("blocked data shape:", zach_dat.shape)
-        print("blocked data:", pd.DataFrame(zach_dat))
+        # print("blocked data shape:", zach_dat.shape)
+        # print("blocked data:", pd.DataFrame(zach_dat))
         train_blocked_data, test_blocked_data, y_train, y_test, test_indices = \
             _get_sample_split_data(blocked_data, y, self.tree_random_state, self.sample_split)
         if train_blocked_data.get_all_data().shape[1] != 0:
             if hasattr(self.estimator, "predict_full") and \
                     hasattr(self.estimator, "predict_partial"):
-                print("IN IF STATEMENT IN LINE 389")
+                # print("IN IF STATEMENT IN LINE 389")
                 full_preds = self.estimator.predict_full(test_blocked_data)
-                print("IN STATEMENT LINE 391")
+                # print("IN STATEMENT LINE 391")
                 partial_preds = self.estimator.predict_partial(test_blocked_data, mode=self.mode, zero_values=zero_values)
             else:
                 if self.task == "regression":
                     ppm = GenericRegressorPPM(self.estimator)
                 elif self.task == "classification":
                     ppm = GenericClassifierPPM(self.estimator)
-                print("GETTING FULL PREDICTIONS")
+                # print("GETTING FULL PREDICTIONS")
                 full_preds = ppm.predict_full(test_blocked_data)
-                print("GETTING PARTIAL PREDICTIONS")
+                # print("GETTING PARTIAL PREDICTIONS")
                 partial_preds = ppm.predict_partial(test_blocked_data, mode=self.mode)
             self._score_full_predictions(y_test, full_preds)
             self._score_partial_predictions(y_test, full_preds, partial_preds)
@@ -416,7 +416,7 @@ class TreeMDIPlus:
         self.is_fitted = True
 
     def _score_full_predictions(self, y_test, full_preds):
-        print("IN '_score_full_predictions' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+        # print("IN '_score_full_predictions' METHOD WITHIN THE TREE MDI PLUS OBJECT")
         scoring_fns = self.scoring_fns if isinstance(self.scoring_fns, dict) \
             else {"score": self.scoring_fns}
         all_prediction_scores = pd.DataFrame({})
@@ -426,7 +426,7 @@ class TreeMDIPlus:
         self.prediction_score_ = all_prediction_scores
 
     def _score_partial_predictions(self, y_test, full_preds, partial_preds):
-        print("IN '_score_partial_predictions' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+        # print("IN '_score_partial_predictions' METHOD WITHIN THE TREE MDI PLUS OBJECT")
         scoring_fns = self.scoring_fns if isinstance(self.scoring_fns, dict) \
             else {"importance": self.scoring_fns}
         if self.local_scoring_fns:
@@ -460,7 +460,7 @@ class TreeMDIPlus:
             self.feature_importances_local_ = all_local_scores
 
 def _partial_preds_to_scores(partial_preds, y_test, scoring_fn, local_scoring_fn=False):
-    print("IN '_partial_preds_to_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+    # print("IN '_partial_preds_to_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
     scores = []
     local_scores = []
     for k, y_pred in partial_preds.items():
@@ -479,7 +479,7 @@ def _partial_preds_to_scores(partial_preds, y_test, scoring_fn, local_scoring_fn
         return np.vstack(scores)
 
 def _get_default_sample_split(sample_split, prediction_model, is_ppm):
-    print("IN '_get_default_sample_split' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+    # print("IN '_get_default_sample_split' METHOD WITHIN THE TREE MDI PLUS OBJECT")
     if sample_split == "auto":
         sample_split = "oob"
         if is_ppm:
@@ -489,14 +489,14 @@ def _get_default_sample_split(sample_split, prediction_model, is_ppm):
 
 
 def _validate_sample_split(sample_split, prediction_model, is_ppm):
-    print("IN '_validate_sample_split' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+    # print("IN '_validate_sample_split' METHOD WITHIN THE TREE MDI PLUS OBJECT")
     if sample_split in ["oob", "inbag"] and is_ppm:
         if prediction_model.loo:
             raise ValueError("Cannot use LOO together with OOB or in-bag sample splitting.")
 
 
 def _get_sample_split_data(blocked_data, y, random_state, sample_split):
-    print("IN '_get_sample_split_data' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+    # print("IN '_get_sample_split_data' METHOD WITHIN THE TREE MDI PLUS OBJECT")
     if sample_split == "oob":
         train_blocked_data, test_blocked_data, y_train, y_test, _, test_indices = \
             _blocked_train_test_split(blocked_data, y, random_state)
