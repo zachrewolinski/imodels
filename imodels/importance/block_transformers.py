@@ -45,6 +45,7 @@ class BlockPartitionedData:
         else:
             all_data = np.hstack(self._data_blocks + [self._common_block])
             # Common block appended at the end
+        print("GETTING ALL DATA, SHAPE:", all_data.shape)
         return all_data
 
     def _create_block_indices(self):
@@ -239,7 +240,8 @@ class BlockTransformerBase(ABC):
         if not self.is_fitted:
             raise AttributeError("Transformer has not yet been fitted.")
 
-    def transform_one_feature(self, X, k, center=True, normalize=False):
+    def transform_one_feature(self, X, k, center=True, normalize=False,
+                              zeros=False):
         """
         Obtain a block of engineered features associated with the original
         feature with index k using the (previously) fitted transformer.
@@ -255,6 +257,9 @@ class BlockTransformerBase(ABC):
         normalize: bool
             Flag for whether to rescale the transformed data to have unit
             variance
+        zeros: bool
+            Flag for whether to return a list corresponding to what zero was
+            mapped to for each column
 
         Returns
         -------
@@ -262,11 +267,18 @@ class BlockTransformerBase(ABC):
             The block of engineered features associated with the original
             feature with index k.
         """
+        if zeros:
+            print("ZEROS IN transform_one_feature")
         data_block = self._transform_one_feature(X, k)
-        data_block = self._center_and_normalize(data_block, k, center, normalize)
+        if zeros:
+            data_block, zero_value = self._center_and_normalize(data_block, k, center, normalize, zeros=zeros)
+        else:
+            data_block = self._center_and_normalize(data_block, k, center, normalize)
+        if zeros:
+            return data_block, zero_value
         return data_block
 
-    def transform(self, X, center=True, normalize=False):
+    def transform(self, X, center=True, normalize=False, zeros=False):
         """
         Transform a data matrix into a BlockPartitionedData object comprising
         one block for each original feature in X using the (previously) fitted
@@ -281,17 +293,37 @@ class BlockTransformerBase(ABC):
         normalize: bool
             Flag for whether to rescale the transformed data to have unit
             variance
+        zeros: bool
+            Flag for whether or not to return a list of lists comprising what
+            value zero got transformed to for each block & column
 
         Returns
         -------
         blocked_data: BlockPartitionedData object
             The transformed data
         """
+        if zeros:
+            print("ZEROS IN transform")
         self.check_is_fitted()
         n_features = X.shape[1]
-        data_blocks = [self.transform_one_feature(X, k, center, normalize) for
-                       k in range(n_features)]
+        data_blocks = []
+        zero_values = []
+        for k in range(n_features):
+            if zeros:
+                dat_block, zero_vec = self.transform_one_feature(X, k, center,
+                                                                 normalize,
+                                                                 zeros=zeros)
+                data_blocks.append(dat_block)
+                zero_values.append(zero_vec)
+            else:
+                data_block = self.transform_one_feature(X, k, center, normalize)
+                data_blocks.append(data_block)
+            
+        # data_blocks = [self.transform_one_feature(X, k, center, normalize, zeros=zeros) for
+        #                k in range(n_features)]
         blocked_data = BlockPartitionedData(data_blocks)
+        if zeros:
+            return blocked_data, zero_values
         return blocked_data
 
     def fit_transform_one_feature(self, X, k, center=True, normalize=False):
@@ -361,15 +393,21 @@ class BlockTransformerBase(ABC):
         self._fit_one_feature(X, k)
         return self._transform_one_feature(X, k)
 
-    def _center_and_normalize(self, data_block, k, center=True, normalize=False):
+    def _center_and_normalize(self, data_block, k, center=True, normalize=False, zeros=False):
+        if zeros:
+            print("ZEROS IN _center_and_normalize")
         if center:
             data_block = data_block - self._centers[k]
+            zero_value = np.zeros(data_block.shape[1]) - self._centers[k]
         if normalize:
             if any(self._scales[k] == 0):
                 raise Warning("No recaling done."
                               "At least one feature is constant.")
             else:
                 data_block = data_block / self._scales[k]
+                zero_value = zero_value / self._scales[k]
+        if zeros:
+            return data_block, zero_value
         return data_block
 
 

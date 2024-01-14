@@ -32,10 +32,13 @@ class LocalDecisionStump:
         List of signs indicating whether the current node is in the left child
         (False) or right child (True) of the ancestor nodes (ordered from
         highest ancestor to lowest)
+    parent: int
+        Index of the parent node in the tree structure. If the node is the root,
+        -1 is used as the index.
     """
 
     def __init__(self, feature, threshold, left_val, right_val, a_features,
-                 a_thresholds, a_signs):
+                 a_thresholds, a_signs, parent):
         self.feature = feature
         self.threshold = threshold
         self.left_val = left_val
@@ -43,6 +46,7 @@ class LocalDecisionStump:
         self.a_features = a_features
         self.a_thresholds = a_thresholds
         self.a_signs = a_signs
+        self.parent = parent
 
     def __call__(self, data):
         """
@@ -122,10 +126,12 @@ def make_stump(node_no, tree_struct, parent_stump, is_right_child,
         a_features = []
         a_thresholds = []
         a_signs = []
+        parent = -1
     else:
         a_features = parent_stump.a_features + [parent_stump.feature]
         a_thresholds = parent_stump.a_thresholds + [parent_stump.threshold]
         a_signs = parent_stump.a_signs + [is_right_child]
+        parent = parent_stump.feature
     # Get indices for left and right children of the node in question
     left_child = tree_struct.children_left[node_no]
     right_child = tree_struct.children_right[node_no]
@@ -140,7 +146,7 @@ def make_stump(node_no, tree_struct, parent_stump, is_right_child,
     right_val = np.sqrt(left_size / (right_size * normalization))
 
     return LocalDecisionStump(feature, threshold, left_val, right_val,
-                              a_features, a_thresholds, a_signs)
+                              a_features, a_thresholds, a_signs, parent)
 
 
 def make_stumps(tree_struct, normalize=False):
