@@ -129,7 +129,8 @@ class ForestMDIPlus:
                         "local": self.feature_importances_local_,
                         "lfi": self.final_lfi_matrix}
             else:
-                return self.feature_importances_
+                return {"global": self.feature_importances_,
+                        "lfi": self.final_lfi_matrix}
         if self.local_scoring_fns:
             return {"global": self.feature_importances_,
                     "local": self.feature_importances_local_}

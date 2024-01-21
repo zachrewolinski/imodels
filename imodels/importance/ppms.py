@@ -324,7 +324,6 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
             # SET ALL COLUMNS/STUMPS NOT FALLING IN SAMPLE'S DECISION PATH EQUAL TO COLUMN MEAN
             if zero_value is not None:
                 for idx in range(len(zero_value)):
-                    print("IDX: ", idx)
                     # print("IN HEYDAY ZONE")
                     # replace any observations in the idx-th column of data block which are equl to zero_value[idx]
                     # with the mean of the idx-th column of data block

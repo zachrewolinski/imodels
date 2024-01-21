@@ -373,7 +373,16 @@ class _RandomForestPlus(BaseEstimator):
                                          version=version)
             self.mdi_plus_ = mdi_plus_obj
             mdi_plus_scores = mdi_plus_obj.get_scores(X_array, y, lfi=lfi)
-            if local_scoring_fns:
+            if lfi and local_scoring_fns:
+                mdi_plus_lfi = mdi_plus_scores["lfi"]
+                mdi_plus_scores_local = mdi_plus_scores["local"]
+                mdi_plus_scores = mdi_plus_scores["global"]
+                self.mdi_plus_lfi = mdi_plus_lfi
+            if lfi and (not local_scoring_fns):
+                mdi_plus_lfi = mdi_plus_scores["lfi"]
+                mdi_plus_scores = mdi_plus_scores["global"]
+                self.mdi_plus_lfi = mdi_plus_lfi
+            if (not lfi) and local_scoring_fns:
                 mdi_plus_scores_local = mdi_plus_scores["local"]
                 mdi_plus_scores = mdi_plus_scores["global"]
             if self.feature_names_ is not None:
@@ -389,9 +398,10 @@ class _RandomForestPlus(BaseEstimator):
             if local_scoring_fns:
                 return {"global": self.mdi_plus_scores_,
                         "local": self.mdi_plus_scores_local_,
-                        "lfi": self.mdi_plus_.final_lfi_matrix}
+                        "lfi": self.mdi_plus_lfi}
             else:
-                return self.mdi_plus_scores_
+                return {"global": self.mdi_plus_scores_,
+                        "lfi": self.mdi_plus_lfi}
         if local_scoring_fns:
             return {"global": self.mdi_plus_scores_,
                     "local": self.mdi_plus_scores_local_}
