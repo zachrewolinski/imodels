@@ -266,7 +266,7 @@ class _RandomForestPlus(BaseEstimator):
     def get_mdi_plus_scores(self, X=None, y=None,
                             scoring_fns="auto", local_scoring_fns=False,
                             sample_split="inherit", mode="keep_k",
-                            version="tiffany"):
+                            version="all", lfi=False):
         """
         Obtain MDI+ feature importances. Generalized mean decrease in impurity (MDI+)
         is a flexible framework for computing RF feature importances. For more
@@ -314,7 +314,7 @@ class _RandomForestPlus(BaseEstimator):
         scores: pd.DataFrame of shape (n_features, n_scoring_fns)
             The MDI+ feature importances.
         """
-        assert version == "tiffany" or version == "zach"
+        assert version == "all" or version == "sub"
         if X is None or y is None:
             if self.mdi_plus_scores_ is None:
                 raise ValueError("Need X and y as inputs.")
@@ -372,7 +372,7 @@ class _RandomForestPlus(BaseEstimator):
                                          normalize=self.normalize,
                                          version=version)
             self.mdi_plus_ = mdi_plus_obj
-            mdi_plus_scores = mdi_plus_obj.get_scores(X_array, y)
+            mdi_plus_scores = mdi_plus_obj.get_scores(X_array, y, lfi=lfi)
             if local_scoring_fns:
                 mdi_plus_scores_local = mdi_plus_scores["local"]
                 mdi_plus_scores = mdi_plus_scores["global"]
@@ -385,6 +385,13 @@ class _RandomForestPlus(BaseEstimator):
             self.mdi_plus_scores_ = mdi_plus_scores
             if local_scoring_fns:
                 self.mdi_plus_scores_local_ = mdi_plus_scores_local
+        if lfi:
+            if local_scoring_fns:
+                return {"global": self.mdi_plus_scores_,
+                        "local": self.mdi_plus_scores_local_,
+                        "lfi": self.mdi_plus_.final_lfi_matrix}
+            else:
+                return self.mdi_plus_scores_
         if local_scoring_fns:
             return {"global": self.mdi_plus_scores_,
                     "local": self.mdi_plus_scores_local_}

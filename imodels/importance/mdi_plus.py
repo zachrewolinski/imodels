@@ -3,7 +3,7 @@ import pandas as pd
 from scipy.spatial.distance import pdist
 from functools import partial
 
-from .ppms import PartialPredictionModelBase, GenericRegressorPPM, GenericClassifierPPM
+from .ppms import PartialPredictionModelBase, GenericRegressorPPM, GenericClassifierPPM, _extract_coef_and_intercept
 from .block_transformers import _blocked_train_test_split
 from .ranking_stability import tauAP_b, rbo
 
@@ -66,8 +66,8 @@ class ForestMDIPlus:
 
     def __init__(self, estimators, transformers, scoring_fns, local_scoring_fns=False,
                  sample_split="loo", tree_random_states=None, mode="keep_k",
-                 task="regression", center=True, normalize=False,version="tiffany"):
-        assert version == "tiffany" or version == "zach"
+                 task="regression", center=True, normalize=False,version="all"):
+        assert version == "all" or version == "sub"
         assert sample_split in ["loo", "oob", "inbag", None]
         assert mode in ["keep_k", "keep_rest"]
         assert task in ["regression", "classification"]
@@ -104,7 +104,7 @@ class ForestMDIPlus:
         self.feature_importances_local_ = {}
         self.feature_importances_local_by_tree_ = {}
 
-    def get_scores(self, X, y):
+    def get_scores(self, X, y, lfi=False):
         """
         Obtain the MDI+ feature importances for a forest.
 
@@ -123,6 +123,13 @@ class ForestMDIPlus:
         """
         # print("IN 'get_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
         self._fit_importance_scores(X, y)
+        if lfi:
+            if self.local_scoring_fns:
+                return {"global": self.feature_importances_,
+                        "local": self.feature_importances_local_,
+                        "lfi": self.final_lfi_matrix}
+            else:
+                return self.feature_importances_
         if self.local_scoring_fns:
             return {"global": self.feature_importances_,
                     "local": self.feature_importances_local_}
@@ -191,12 +198,11 @@ class ForestMDIPlus:
         return stability_df
 
     def _fit_importance_scores(self, X, y):
-        # print("IN '_fit_importance_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
         all_scores = []
         all_full_preds = []
         all_local_scores = []
-        # print("RF+ _fit_importance_scores X Shape:", X.shape)
-        # print("RF+ _fit_importance_scores X:", X)
+        num_iters = len(list(zip(self.estimators, self.transformers, self.tree_random_states)))
+        lfi_matrix_lst = list()
         for estimator, transformer, tree_random_state in \
                 zip(self.estimators, self.transformers, self.tree_random_states):
             tree_mdi_plus = TreeMDIPlus(estimator=estimator,
@@ -209,8 +215,10 @@ class ForestMDIPlus:
                                         task=self.task,
                                         center=self.center,
                                         normalize=self.normalize,
-                                        version=self.version)
+                                        version=self.version,
+                                        num_iters=num_iters)
             scores = tree_mdi_plus.get_scores(X, y)
+            lfi_matrix_lst.append(tree_mdi_plus.lfi_matrix)
             if scores is not None:
                 if self.local_scoring_fns:
                     local_scores = scores["local"]
@@ -218,6 +226,11 @@ class ForestMDIPlus:
                     all_local_scores.append(local_scores)
                 all_scores.append(scores)
                 all_full_preds.append(tree_mdi_plus._full_preds)
+        stacked_lfi_matrices = np.stack(lfi_matrix_lst, axis=0)
+        average_lfi_matrix = np.mean(stacked_lfi_matrices, axis=0)
+        self.final_lfi_matrix = average_lfi_matrix
+        # print("LFI MATRIX")
+        # print(pd.DataFrame(self.lfi_matrix))
         if len(all_scores) == 0:
             raise ValueError("Transformer representation was empty for all trees.")
         full_preds = np.nanmean(all_full_preds, axis=0)
@@ -305,8 +318,9 @@ class TreeMDIPlus:
 
     def __init__(self, estimator, transformer, scoring_fns, local_scoring_fns=False,
                  sample_split="loo", tree_random_state=None, mode="keep_k",
-                 task="regression", center=True, normalize=False,version="tiffany"):
-        assert version == "tiffany" or version == "zach"
+                 task="regression", center=True, normalize=False,version="all",
+                 num_iters=-1):
+        assert version == "all" or version == "sub"
         assert sample_split in ["loo", "oob", "inbag", "auto", None]
         assert mode in ["keep_k", "keep_rest"]
         assert task in ["regression", "classification"]
@@ -314,6 +328,7 @@ class TreeMDIPlus:
         self.estimator = estimator
         self.transformer = transformer
         self.version = version
+        self.num_iters = num_iters
         self.scoring_fns = scoring_fns
         self.local_scoring_fns = local_scoring_fns
         self.sample_split = sample_split
@@ -372,7 +387,7 @@ class TreeMDIPlus:
         # print("IN '_fit_importance_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
         n_samples = y.shape[0]
         zero_values = None
-        if self.version == "zach":
+        if self.version == "sub":
             blocked_data, zero_values = self.transformer.transform(X,
                                                     center=self.center,
                                                     normalize=self.normalize,
@@ -382,11 +397,25 @@ class TreeMDIPlus:
                                                     center=self.center,
                                                     normalize=self.normalize,
                                                     zeros=False)
-        # print("ZERO VALUES:", zero_values)
+        
+        coefs = self.estimator.coefficients_
+        lfi_matrix = np.zeros((blocked_data.get_all_data().shape[0], X.shape[1]))
+        for j in range(self.estimator._n_outputs):
+            # actually not sure what to do in the case with multiple outputs
+            if len(coefs[j]) == (blocked_data.get_all_data().shape[1] + 1):
+                intercept = coefs[j][-1]
+                coefs_j = coefs[j][:-1]
+            coef_idx = 0
+            for k in range(blocked_data.n_blocks):
+                block_k = blocked_data.get_block(k)
+                # print("block #", i, "shape:", dat.shape)
+                # print("coef_idx:", coef_idx)
+                # print("block_k colnums:", block_k.shape[1])
+                lfi_matrix[:,k] = np.abs(block_k @ coefs_j[coef_idx:(coef_idx + block_k.shape[1])])
+                # print("lfi shape", lfi.shape)
+                coef_idx += block_k.shape[1]
+        self.lfi_matrix = lfi_matrix
         self.n_features = blocked_data.n_blocks
-        zach_dat = blocked_data.get_all_data()
-        # print("blocked data shape:", zach_dat.shape)
-        # print("blocked data:", pd.DataFrame(zach_dat))
         train_blocked_data, test_blocked_data, y_train, y_test, test_indices = \
             _get_sample_split_data(blocked_data, y, self.tree_random_state, self.sample_split)
         if train_blocked_data.get_all_data().shape[1] != 0:
