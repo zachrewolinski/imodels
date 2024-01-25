@@ -104,7 +104,7 @@ class ForestMDIPlus:
         self.feature_importances_local_ = {}
         self.feature_importances_local_by_tree_ = {}
 
-    def get_scores(self, X, y, lfi=False, lfi_type="loo", lfi_abs="inside"):
+    def get_scores(self, X, y, lfi=False, lfi_abs="inside"):
         """
         Obtain the MDI+ feature importances for a forest.
 
@@ -122,7 +122,6 @@ class ForestMDIPlus:
             The MDI+ feature importances.
         """
         # print("IN 'get_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
-        self.lfi_type = lfi_type
         self.lfi_abs = lfi_abs
         self._fit_importance_scores(X, y)
         if lfi:
@@ -220,7 +219,6 @@ class ForestMDIPlus:
                                         normalize=self.normalize,
                                         version=self.version,
                                         num_iters=num_iters,
-                                        lfi_type=self.lfi_type,
                                         lfi_abs=self.lfi_abs)
             scores = tree_mdi_plus.get_scores(X, y)
             lfi_matrix_lst.append(tree_mdi_plus.lfi_matrix)
@@ -324,7 +322,7 @@ class TreeMDIPlus:
     def __init__(self, estimator, transformer, scoring_fns, local_scoring_fns=False,
                  sample_split="loo", tree_random_state=None, mode="keep_k",
                  task="regression", center=True, normalize=False,version="all",
-                 num_iters=-1, lfi_type="loo", lfi_abs="inside"):
+                 num_iters=-1, lfi_abs="inside"):
         assert version == "all" or version == "sub"
         assert sample_split in ["loo", "oob", "inbag", "auto", None]
         assert mode in ["keep_k", "keep_rest"]
@@ -345,7 +343,6 @@ class TreeMDIPlus:
         self.task = task
         self.center = center
         self.normalize = normalize
-        self.lfi_type = lfi_type
         self.lfi_abs = lfi_abs
         if self.local_scoring_fns and self.mode == "keep_rest":
             raise ValueError("Local feature importances have not yet been implemented when mode='keep_rest'.")
@@ -408,60 +405,24 @@ class TreeMDIPlus:
         coefs = self.estimator.coefficients_
         loo_coefs = self.estimator.loo_coefficients_
         lfi_matrix = np.zeros((blocked_data.get_all_data().shape[0], X.shape[1]))
-        if self.lfi_type == "loo":
-            for j in range(self.estimator._n_outputs):
-                # actually not sure what to do in the case with multiple outputs
-                if loo_coefs[j].shape[1] == (blocked_data.get_all_data().shape[1] + 1):
-                    intercept = loo_coefs[j][:,-1]
-                    loo_coefs_j = loo_coefs[j][:,:-1]
+        for j in range(self.estimator._n_outputs):
+            # actually not sure what to do in the case with multiple outputs
+            if loo_coefs[j].shape[1] == (blocked_data.get_all_data().shape[1] + 1):
+                intercept = loo_coefs[j][:,-1]
+                loo_coefs_j = loo_coefs[j][:,:-1]
+            else:
+                loo_coefs_j = loo_coefs[j]
+            coef_idx = 0
+            for k in range(blocked_data.n_blocks):
+                block_k = blocked_data.get_block(k)
+                if self.lfi_abs == "inside":
+                    lfi_matrix[:, k] = np.diagonal(np.abs(block_k) @ np.abs(np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
+                elif self.lfi_abs == "outside":
+                    lfi_matrix[:, k] = np.abs(np.diagonal(block_k @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
                 else:
-                    loo_coefs_j = loo_coefs[j]
-                coef_idx = 0
-                for k in range(blocked_data.n_blocks):
-                    block_k = blocked_data.get_block(k)
-                    for i in range(block_k.shape[0]):
-                        colsum = 0
-                        for j in range(block_k.shape[1]):
-                            if self.lfi_abs == "inside":
-                                colsum += np.abs(loo_coefs_j[i,j]*block_k[i,j])
-                            elif self.lfi_abs == "outside":
-                                colsum += loo_coefs_j[i,j]*block_k[i,j]
-                            else:
-                                ValueError("lfi_abs must be either 'inside' or 'outside'.")
-                        if self.lfi_abs == "inside":
-                            lfi_matrix[i, k] = colsum
-                        elif self.lfi_abs == "outside":
-                            lfi_matrix[i, k] = np.abs(colsum)
-                        else:
-                            ValueError("lfi_abs must be either 'inside' or 'outside'.")
-                    coef_idx += block_k.shape[1]
-        elif self.lfi_type == "standard":
-            for j in range(self.estimator._n_outputs):
-                # actually not sure what to do in the case with multiple outputs
-                if len(coefs[j]) == (blocked_data.get_all_data().shape[1] + 1):
-                    intercept = loo_coefs[j][:,-1]
-                    coefs_j = coefs[j][:-1]
-                else:
-                    coefs_j = coefs[j]
-                coef_idx = 0
-                for k in range(blocked_data.n_blocks):
-                    block_k = blocked_data.get_block(k)
-                    for i in range(block_k.shape[0]):
-                        colsum = 0
-                        for j in range(block_k.shape[1]):
-                            if self.lfi_abs == "inside":
-                                colsum += np.abs(coefs_j[j]*block_k[i,j])
-                            elif self.lfi_abs == "outside":
-                                colsum += coefs_j[j]*block_k[i,j]
-                            else:
-                                ValueError("lfi_abs must be either 'inside' or 'outside'.")
-                        if self.lfi_abs == "inside":
-                            lfi_matrix[i, k] = colsum
-                        elif self.lfi_abs == "outside":
-                            lfi_matrix[i, k] = np.abs(colsum)
-                        else:
-                            ValueError("lfi_abs must be either 'inside' or 'outside'.")
-                    coef_idx += block_k.shape[1]
+                    ValueError("lfi_abs must be either 'inside' or 'outside'.")
+                coef_idx += block_k.shape[1]
+            # print("equal:", np.allclose(lfi_matrix, lfi2_matrix))
         self.lfi_matrix = lfi_matrix
         self.n_features = blocked_data.n_blocks
         train_blocked_data, test_blocked_data, y_train, y_test, test_indices = \
