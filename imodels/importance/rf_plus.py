@@ -85,7 +85,7 @@ class _RandomForestPlus(BaseEstimator):
         self.sample_split = _get_default_sample_split(sample_split, prediction_model, self._is_ppm)
         _validate_sample_split(self.sample_split, prediction_model, self._is_ppm)
 
-    def fit(self, X, y, sample_weight=None, **kwargs):
+    def fit(self, X, y, center=True, sample_weight=None, **kwargs):
         """
         Fit (or train) Random Forest Plus (RF+) prediction model.
 
@@ -122,6 +122,10 @@ class _RandomForestPlus(BaseEstimator):
             y = y.values.ravel()
         elif not isinstance(y, np.ndarray):
             raise ValueError("Input y must be a pandas DataFrame or numpy array.")
+        
+        # center data before fitting random forest
+        if center:
+            X = X - X.mean(axis=0)
 
         # fit random forest
         n_samples = X.shape[0]
