@@ -419,8 +419,10 @@ class TreeMDIPlus:
                     lfi_matrix[:, k] = np.diagonal(np.abs(block_k) @ np.abs(np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
                 elif self.lfi_abs == "outside":
                     lfi_matrix[:, k] = np.abs(np.diagonal(block_k @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
+                elif self.lfi_abs == "none":
+                    lfi_matrix[:, k] = np.diagonal(block_k @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])]))
                 else:
-                    ValueError("lfi_abs must be either 'inside' or 'outside'.")
+                    ValueError("lfi_abs must be either 'inside', 'outside', or 'none'.")
                 coef_idx += block_k.shape[1]
             # print("equal:", np.allclose(lfi_matrix, lfi2_matrix))
         self.lfi_matrix = lfi_matrix
