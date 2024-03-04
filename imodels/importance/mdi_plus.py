@@ -232,8 +232,6 @@ class ForestMDIPlus:
         stacked_lfi_matrices = np.stack(lfi_matrix_lst, axis=0)
         average_lfi_matrix = np.mean(stacked_lfi_matrices, axis=0)
         self.final_lfi_matrix = pd.DataFrame(average_lfi_matrix)
-        # print("LFI MATRIX")
-        # print(pd.DataFrame(self.lfi_matrix))
         if len(all_scores) == 0:
             raise ValueError("Transformer representation was empty for all trees.")
         full_preds = np.nanmean(all_full_preds, axis=0)
@@ -423,7 +421,8 @@ class TreeMDIPlus:
                 elif self.lfi_abs == "outside":
                     lfi_matrix[:, k] = np.abs(np.diagonal(block_k @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
                 elif self.lfi_abs == "none":
-                    lfi_matrix[:, k] = np.diagonal(block_k @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])]))
+                    lfi_matrix[:, k] = np.diagonal(block_k @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])) - \
+                        np.mean(block_k, axis = 0) @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])
                 else:
                     ValueError("lfi_abs must be either 'inside', 'outside', or 'none'.")
                 coef_idx += block_k.shape[1]
