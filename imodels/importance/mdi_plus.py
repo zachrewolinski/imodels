@@ -104,7 +104,7 @@ class ForestMDIPlus:
         self.feature_importances_local_ = {}
         self.feature_importances_local_by_tree_ = {}
 
-    def get_scores(self, X, y, lfi=False, lfi_abs="inside"):
+    def get_scores(self, X, y, lfi=False, lfi_abs="inside", train_or_test="train"):
         """
         Obtain the MDI+ feature importances for a forest.
 
@@ -123,6 +123,7 @@ class ForestMDIPlus:
         """
         # print("IN 'get_scores' METHOD WITHIN THE FOREST MDI PLUS OBJECT")
         self.lfi_abs = lfi_abs
+        self.train_or_test = train_or_test
         self._fit_importance_scores(X, y)
         if lfi:
             if self.local_scoring_fns:
@@ -220,7 +221,7 @@ class ForestMDIPlus:
                                         version=self.version,
                                         num_iters=num_iters,
                                         lfi_abs=self.lfi_abs)
-            scores = tree_mdi_plus.get_scores(X, y)
+            scores = tree_mdi_plus.get_scores(X, y, self.train_or_test)
             lfi_matrix_lst.append(tree_mdi_plus.lfi_matrix)
             if scores is not None:
                 if self.local_scoring_fns:
@@ -363,7 +364,7 @@ class TreeMDIPlus:
         self.feature_importances_ = None
         self.feature_importances_local_ = None
 
-    def get_scores(self, X, y):
+    def get_scores(self, X, y, train_or_test):
         """
         Obtain the MDI+ feature importances for a single tree.
 
@@ -381,14 +382,15 @@ class TreeMDIPlus:
             The MDI+ feature importances.
         """
         # print("IN 'get_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
-        self._fit_importance_scores(X, y)
+        self._fit_importance_scores(X, y, train_or_test)
         if self.local_scoring_fns:
             return {"global": self.feature_importances_,
                     "local": self.feature_importances_local_}
         else:
             return self.feature_importances_
 
-    def _fit_importance_scores(self, X, y):
+    def _fit_importance_scores(self, X, y, train_or_test):
+        assert train_or_test in ["train", "test"], "invalid value for train_or_test"
         # print("IN '_fit_importance_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
         n_samples = y.shape[0]
         zero_values = None
@@ -408,23 +410,51 @@ class TreeMDIPlus:
         lfi_matrix = np.zeros((blocked_data.get_all_data().shape[0], X.shape[1]))
         for j in range(self.estimator._n_outputs):
             # actually not sure what to do in the case with multiple outputs
-            if loo_coefs[j].shape[1] == (blocked_data.get_all_data().shape[1] + 1):
-                intercept = loo_coefs[j][:,-1]
-                loo_coefs_j = loo_coefs[j][:,:-1]
+            # coefs should always have the same length as the number of columns,
+            # so we can use coefs[j].shape[0] to determine if we have an
+            # intercept in both the loo case and the non-loo case.
+            if coefs[j].shape[0] == (blocked_data.get_all_data().shape[1] + 1):
+                # from extract_coef_and_intercept in PPM,
+                # we know that in this case, the last element is the intercept
+                if train_or_test == "train":
+                    print("Using LOO Coefficients for Training Data!")
+                    intercept = loo_coefs[j][:,-1]
+                    coefs_j = loo_coefs[j][:,:-1]
+                else:
+                    print("Using Non-LOO Coefficients for Testing Data!")
+                    intercept = coefs[j][-1]
+                    coefs_j = coefs[j][:-1]
             else:
-                loo_coefs_j = loo_coefs[j]
+                if train_or_test == "train":
+                    # print("Using LOO Coefficients for Training Data!")
+                    coefs_j = loo_coefs[j]
+                else:
+                    # print("Using Non-LOO Coefficients for Testing Data!")
+                    coefs_j = coefs[j]
             coef_idx = 0
             for k in range(blocked_data.n_blocks):
                 block_k = blocked_data.get_block(k)
-                if self.lfi_abs == "inside":
-                    lfi_matrix[:, k] = np.diagonal(np.abs(block_k) @ np.abs(np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
-                elif self.lfi_abs == "outside":
-                    lfi_matrix[:, k] = np.abs(np.diagonal(block_k @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
-                elif self.lfi_abs == "none":
-                    lfi_matrix[:, k] = np.diagonal(block_k @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])) - \
-                        np.mean(block_k, axis = 0) @ np.transpose(loo_coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])
+                # print("BLOCK K SHAPE", block_k.shape)
+                if train_or_test == "train":
+                    if self.lfi_abs == "inside":
+                        lfi_matrix[:, k] = np.diagonal(np.abs(block_k) @ np.abs(np.transpose(coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
+                    elif self.lfi_abs == "outside":
+                        lfi_matrix[:, k] = np.abs(np.diagonal(block_k @ np.transpose(coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
+                    elif self.lfi_abs == "none":
+                        lfi_matrix[:, k] = np.diagonal(block_k @ np.transpose(coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])) - \
+                            np.mean(block_k, axis = 0) @ np.transpose(coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])
+                    else:
+                        ValueError("lfi_abs must be either 'inside', 'outside', or 'none'.")
                 else:
-                    ValueError("lfi_abs must be either 'inside', 'outside', or 'none'.")
+                    if self.lfi_abs == "inside":
+                        lfi_matrix[:, k] = np.abs(block_k) @ np.abs(coefs_j[coef_idx:(coef_idx + block_k.shape[1])])
+                    elif self.lfi_abs == "outside":
+                        lfi_matrix[:, k] = np.abs(block_k @ coefs_j[coef_idx:(coef_idx + block_k.shape[1])])
+                    elif self.lfi_abs == "none":
+                        lfi_matrix[:, k] = block_k @ coefs_j[coef_idx:(coef_idx + block_k.shape[1])] - \
+                            np.mean(block_k, axis = 0) @ coefs_j[coef_idx:(coef_idx + block_k.shape[1])]
+                    else:
+                        ValueError("lfi_abs must be either 'inside', 'outside', or 'none'.")
                 coef_idx += block_k.shape[1]
             # print("equal:", np.allclose(lfi_matrix, lfi2_matrix))
         self.lfi_matrix = lfi_matrix

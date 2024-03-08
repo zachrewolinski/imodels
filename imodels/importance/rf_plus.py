@@ -270,7 +270,8 @@ class _RandomForestPlus(BaseEstimator):
     def get_mdi_plus_scores(self, X=None, y=None,
                             scoring_fns="auto", local_scoring_fns=False,
                             sample_split="inherit", mode="keep_k",
-                            version="all", lfi=False, lfi_abs="inside"):
+                            version="all", lfi=False, lfi_abs="inside",
+                            train_or_test="train"):
         """
         Obtain MDI+ feature importances. Generalized mean decrease in impurity (MDI+)
         is a flexible framework for computing RF feature importances. For more
@@ -377,7 +378,8 @@ class _RandomForestPlus(BaseEstimator):
                                          version=version)
             self.mdi_plus_ = mdi_plus_obj
             mdi_plus_scores = mdi_plus_obj.get_scores(X_array, y, lfi=lfi,
-                                                      lfi_abs=lfi_abs)
+                                                      lfi_abs=lfi_abs,
+                                                      train_or_test=train_or_test)
             if lfi and local_scoring_fns:
                 mdi_plus_lfi = mdi_plus_scores["lfi"]
                 mdi_plus_scores_local = mdi_plus_scores["local"]
