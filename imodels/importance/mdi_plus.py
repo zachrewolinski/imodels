@@ -417,11 +417,11 @@ class TreeMDIPlus:
                 # from extract_coef_and_intercept in PPM,
                 # we know that in this case, the last element is the intercept
                 if train_or_test == "train":
-                    print("Using LOO Coefficients for Training Data!")
+                    # print("Using LOO Coefficients for Training Data!")
                     intercept = loo_coefs[j][:,-1]
                     coefs_j = loo_coefs[j][:,:-1]
                 else:
-                    print("Using Non-LOO Coefficients for Testing Data!")
+                    # print("Using Non-LOO Coefficients for Testing Data!")
                     intercept = coefs[j][-1]
                     coefs_j = coefs[j][:-1]
             else:
