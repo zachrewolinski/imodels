@@ -1,6 +1,7 @@
 import copy
 import numpy as np
 import pandas as pd
+import shap
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
@@ -266,6 +267,37 @@ class _RandomForestPlus(BaseEstimator):
             predictions += estimator.predict_proba(blocked_data.get_all_data())
         predictions = predictions / len(self.estimators_)
         return predictions
+    
+    def get_shap_scores(self, trainX: np.ndarray, testX: np.ndarray,
+                        p: float = 1) -> np.ndarray:
+        """
+        Obtain KernelSHAP feature importances.
+
+        Inputs:
+            trainX (np.ndarray): The training covariate matrix. This is
+                                 necessary to fit the KernelSHAP model.
+            testX (np.ndarray): The testing covariate matrix. This is the data
+                                the resulting SHAP values will be based on.
+            p (float): The proportion of the training data which will be used to
+                       fit the KernelSHAP model. Due to the expensive
+                       computation of KernelSHAP, for large datasets it may be
+                       helpful to have p < 1.
+        """
+        
+        # check that p is a valid proportion
+        assert 0 < p <= 1, "p must be in the interval (0, 1]"
+        
+        # get the subset of the training data to use
+        n_train = trainX.shape[0]
+        trainX_subset = shap.utils.sample(trainX, int(p * n_train))
+        
+        # fit the KernelSHAP model
+        shap_model = shap.KernelExplainer(self.predict, trainX_subset)
+        
+        # get the SHAP values
+        shap_values = shap_model.shap_values(testX)
+                
+        return shap_values
 
     def get_mdi_plus_scores(self, X=None, y=None,
                             scoring_fns="auto", local_scoring_fns=False,

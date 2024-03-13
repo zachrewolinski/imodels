@@ -340,6 +340,7 @@ class TreeMDIPlus:
             raise ValueError("Must specify tree_random_state to use 'oob' or 'inbag' sample_split.")
         if isinstance(self.estimator, _GlmPPM):
             if self.estimator.loo and self.sample_split != "loo":
+                # print('Not calculating loo coefs')
                 self.estimator.loo = False
         self.mode = mode
         self.task = task
