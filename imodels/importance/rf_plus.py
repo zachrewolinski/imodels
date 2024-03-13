@@ -2,6 +2,7 @@ import copy
 import numpy as np
 import pandas as pd
 import shap
+from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
@@ -188,6 +189,11 @@ class _RandomForestPlus(BaseEstimator):
             pred_score_name = "auroc"
         self.prediction_score_ = pd.DataFrame({pred_score_name: [pred_score]})
         self._full_preds = full_preds
+        
+    def par_helper(self, estimator, transformer, data):
+        blocked_data = transformer.transform(data, center=self.center, normalize=self.normalize)
+        predictions = estimator.predict(blocked_data.get_all_data())
+        return predictions
 
     def predict(self, X):
         """
@@ -217,11 +223,14 @@ class _RandomForestPlus(BaseEstimator):
             raise ValueError("Input X must be a pandas DataFrame or numpy array.")
 
         if self._task == "regression":
+            # predictions = Parallel(n_jobs=2)(delayed(self.par_helper)(self.estimators_[i], self.transformers_[i], X_array) for i in range(len(self.estimators_)))
+            # predictions = np.mean(predictions, axis=0)
             predictions = 0
             for estimator, transformer in zip(self.estimators_, self.transformers_):
                 blocked_data = transformer.transform(X_array, center=self.center, normalize=self.normalize)
                 predictions += estimator.predict(blocked_data.get_all_data())
             predictions = predictions / len(self.estimators_)
+            # print("PREDICTIONS ARE EQUIVALENT:", np.allclose(predictions, predictions1))
         elif self._task == "classification":
             prob_predictions = self.predict_proba(X_array)
             if prob_predictions.ndim == 1:
