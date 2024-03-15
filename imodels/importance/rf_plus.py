@@ -2,6 +2,7 @@ import copy
 import numpy as np
 import pandas as pd
 import shap
+import lime
 from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils import check_array
@@ -57,7 +58,7 @@ class _RandomForestPlus(BaseEstimator):
 
     def __init__(self, rf_model=None, prediction_model=None, sample_split="auto",
                  include_raw=True, drop_features=True, add_transformers=None,
-                 center=True, normalize=False):
+                 center=True, normalize=False, cv_ridge = None):
         assert sample_split in ["loo", "oob", "inbag", "auto", None]
         super().__init__()
         if isinstance(self, RegressorMixin):
@@ -73,7 +74,7 @@ class _RandomForestPlus(BaseEstimator):
                 rf_model = RandomForestClassifier()
         if prediction_model is None:
             if self._task == "regression":
-                prediction_model = RidgeRegressorPPM()
+                prediction_model = RidgeRegressorPPM(cv_ridge = cv_ridge)
             elif self._task == "classification":
                 prediction_model = LogisticClassifierPPM()
         self.rf_model = rf_model
@@ -277,7 +278,7 @@ class _RandomForestPlus(BaseEstimator):
         predictions = predictions / len(self.estimators_)
         return predictions
     
-    def get_shap_scores(self, trainX: np.ndarray, testX: np.ndarray,
+    def get_kernel_shap_scores(self, trainX: np.ndarray, testX: np.ndarray,
                         p: float = 1) -> np.ndarray:
         """
         Obtain KernelSHAP feature importances.
@@ -307,6 +308,65 @@ class _RandomForestPlus(BaseEstimator):
         shap_values = shap_model.shap_values(testX)
                 
         return shap_values
+    
+    # def get_shap_scores(self, trainX: np.ndarray, testX: np.ndarray, max_samples: float = 1000):
+    #     """
+    #     Obtain SHAP feature importances.
+
+    #     Inputs:
+    #         trainX (np.ndarray): The training covariate matrix. This is
+    #                              necessary to fit the SHAP model.
+    #         testX (np.ndarray): The testing covariate matrix. This is the data
+    #                             the resulting SHAP values will be based on.
+    #         max_samples (float): The maximum number of samples to use from the
+    #                              passed background data.
+    #     """
+        
+    #     background = shap.maskers.Independent(trainX, max_samples=max_samples)
+    #     explainer = shap.Explainer(self.predict, background)
+    #     shap_values = explainer(testX)
+    #     return shap_values.values
+    
+    def get_lime_scores(self, X_train: np.ndarray,
+                        X_test: np.ndarray) -> np.ndarray:
+        """
+        Obtain LIME feature importances.
+
+        Inputs:
+            X_train (np.ndarray): The training covariate matrix. This is
+                                 necessary to fit the LIME model.
+            X_test (np.ndarray): The testing covariate matrix. This is the data
+                                the resulting LIME values will be based on.
+            num_samples (int): The number of samples to use when fitting the
+                               LIME model.
+        """
+        
+        # set seed for reproducibility
+        np.random.seed(1)
+        
+        # get shape of X_test
+        num_samples, num_features = X_test.shape
+        
+        # create data structure to save scores in
+        result = np.zeros((num_samples, num_features))
+        
+        # initialize the LIME explainer
+        explainer = lime.lime_tabular.LimeTabularExplainer(X_train,
+                                                           verbose=False,
+                                                           mode=self._task)
+        for i in range(num_samples):
+            exp = explainer.explain_instance(X_test[i,:], self.predict,
+                                             num_features=num_features)
+            original_feature_importance = exp.as_map()[1]
+            sorted_feature_importance = sorted(original_feature_importance,
+                                               key = lambda x: x[0])
+            for j in range(num_features):
+                result[i,j] = abs(sorted_feature_importance[j][1])
+        # Convert the array to a DataFrame
+        lime_values = pd.DataFrame(result, columns=[f'Feature_{i}' for \
+                                       i in range(num_features)])
+
+        return lime_values
 
     def get_mdi_plus_scores(self, X=None, y=None,
                             scoring_fns="auto", local_scoring_fns=False,

@@ -224,14 +224,15 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         Flag indicating which strategy to use when performing leave-one-out
         cross-validation for ridge regression, if applicable.
         See gcv_mode in sklearn.linear_model.RidgeCV for details.
+    cv_mode: None for LOOCV, int for k-fold CV with integer being # of folds
     """
 
     def __init__(self, estimator, loo=True, alpha_grid=np.logspace(-4, 4, 10),
                  inv_link_fn=lambda a: a, l_dot=lambda a, b: b - a,
                  l_doubledot=lambda a, b: 1, r_doubledot=lambda a: 1,
                  hyperparameter_scorer=mean_squared_error,
-                 trim=None, gcv_mode='auto'):
-        # print("CREATING _GlmPPM OBJECT")
+                 trim=None, gcv_mode='auto', cv_ridge = None,
+                 lambda_zero = False):
         super().__init__(estimator)
         self.loo = loo
         self.alpha_grid = alpha_grid
@@ -241,6 +242,8 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         self.r_doubledot = r_doubledot
         self.trim = trim
         self.gcv_mode = gcv_mode
+        self.cv_ridge = cv_ridge
+        self.lambda_zero = lambda_zero
         self.hyperparameter_scorer = hyperparameter_scorer
         self.alpha_ = {}
         self.loo_coefficients_ = {}
@@ -260,11 +263,15 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         self._n_outputs = y_train.shape[1]
         for j in range(self._n_outputs):
             yj = y_train[:, j]
-            # Compute regularization hyperparameter using approximate LOOCV
+            # Compute regularization hyperparameter using approximate LOOCV or k-fold CV
             if isinstance(self.estimator, Ridge):
-                cv = RidgeCV(alphas=self.alpha_grid, gcv_mode=self.gcv_mode)
-                cv.fit(X, yj)
-                self.alpha_[j] = cv.alpha_
+                if self.cv_ridge == 0:
+                    self.alpha_[j] = 0
+                else:
+                    cv = RidgeCV(alphas = self.alpha_grid, gcv_mode=self.gcv_mode,
+                                cv=self.cv_ridge)
+                    cv.fit(X, yj)
+                    self.alpha_[j] = cv.alpha_
             else:
                 self.alpha_[j] = self._get_aloocv_alpha(X, yj)
             # Fit the model on the training set and compute the coefficients
@@ -457,9 +464,10 @@ class _RidgePPM(_GlmPPM, PartialPredictionModelBase, ABC):
     """
 
     def __init__(self, loo=True, alpha_grid=np.logspace(-5, 5, 100),
-                 gcv_mode='auto', **kwargs):
+                 gcv_mode='auto', cv_ridge=None, **kwargs):
         # print("CREATING _RidgePPM OBJECT")
-        super().__init__(Ridge(**kwargs), loo, alpha_grid, gcv_mode=gcv_mode)
+        super().__init__(Ridge(**kwargs), loo, alpha_grid, gcv_mode=gcv_mode,
+                         cv_ridge = cv_ridge)
 
     def set_alphas(self, alphas="default", blocked_data=None, y=None):
         # print("IN 'set_alphas' method of _RidgePPM")
