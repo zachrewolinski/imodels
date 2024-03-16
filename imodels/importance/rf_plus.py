@@ -298,6 +298,7 @@ class _RandomForestPlus(BaseEstimator):
         assert 0 < p <= 1, "p must be in the interval (0, 1]"
         
         # get the subset of the training data to use
+        np.random.seed(1)
         n_train = trainX.shape[0]
         trainX_subset = shap.utils.sample(trainX, int(p * n_train))
         
