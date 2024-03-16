@@ -355,8 +355,14 @@ class _RandomForestPlus(BaseEstimator):
         explainer = lime.lime_tabular.LimeTabularExplainer(X_train,
                                                            verbose=False,
                                                            mode=self._task)
+        if self._task == "regression":
+            predict_fn = self.predict
+        elif self._task == "classification":
+            predict_fn = self.predict_proba
+        else:
+            raise ValueError("Unknown task.")
         for i in range(num_samples):
-            exp = explainer.explain_instance(X_test[i,:], self.predict,
+            exp = explainer.explain_instance(X_test[i,:], predict_fn,
                                              num_features=num_features)
             original_feature_importance = exp.as_map()[1]
             sorted_feature_importance = sorted(original_feature_importance,
