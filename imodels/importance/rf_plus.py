@@ -132,7 +132,10 @@ class _RandomForestPlus(BaseEstimator):
 
         # fit random forest
         n_samples = X.shape[0]
-        self.rf_model.fit(X, y, sample_weight=sample_weight)
+        
+        # check if self.rf_model has already been fit
+        if not hasattr(self.rf_model, "estimators_"):
+            self.rf_model.fit(X, y, sample_weight=sample_weight)
         # onehot encode multiclass response for GlmClassiferPPM
         if isinstance(self.prediction_model, GlmClassifierPPM):
             self._multi_class = False

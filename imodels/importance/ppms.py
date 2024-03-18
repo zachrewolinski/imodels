@@ -275,11 +275,11 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
             else:
                 self.alpha_[j] = self._get_aloocv_alpha(X, yj)
             # Fit the model on the training set and compute the coefficients
-            if self.loo:
+            if self.loo and self.cv_ridge == None:
                 self.loo_coefficients_[j] = \
                     self._fit_loo_coefficients(X, yj, self.alpha_[j])
                 self.coefficients_[j] = _extract_coef_and_intercept(self.estimator)
-                # print("CALCULATED LOO COEFFICIENTS")
+                print("CALCULATED LOO COEFFICIENTS")
             else:
                 self.coefficients_[j] = \
                     self._fit_coefficients(X, yj, self.alpha_[j])
@@ -300,7 +300,7 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         # print("IN 'predict_loo' method of _GlmPPM")
         preds_list = []
         for j in range(self._n_outputs):
-            if self.loo:
+            if self.loo and self.cv_ridge == None:
                 preds_j = _get_preds(X, self.loo_coefficients_[j], self.inv_link_fn)
             else:
                 preds_j = _get_preds(X, self.coefficients_[j], self.inv_link_fn)
