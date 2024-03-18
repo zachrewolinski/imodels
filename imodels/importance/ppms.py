@@ -279,7 +279,7 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
                 self.loo_coefficients_[j] = \
                     self._fit_loo_coefficients(X, yj, self.alpha_[j])
                 self.coefficients_[j] = _extract_coef_and_intercept(self.estimator)
-                print("CALCULATED LOO COEFFICIENTS")
+                #print("CALCULATED LOO COEFFICIENTS")
             else:
                 self.coefficients_[j] = \
                     self._fit_coefficients(X, yj, self.alpha_[j])
