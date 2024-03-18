@@ -281,20 +281,22 @@ class _RandomForestPlus(BaseEstimator):
         predictions = predictions / len(self.estimators_)
         return predictions
     
-    def get_kernel_shap_scores(self, trainX: np.ndarray, testX: np.ndarray,
-                        p: float = 1) -> np.ndarray:
+    def get_kernel_shap_scores(self, X_train: np.ndarray, X_test: np.ndarray,
+                        p: float = 1,use_summary = True,k=1) -> np.ndarray:
         """
         Obtain KernelSHAP feature importances.
 
         Inputs:
-            trainX (np.ndarray): The training covariate matrix. This is
+            X_train (np.ndarray): The training covariate matrix. This is
                                  necessary to fit the KernelSHAP model.
-            testX (np.ndarray): The testing covariate matrix. This is the data
+            X_test (np.ndarray): The testing covariate matrix. This is the data
                                 the resulting SHAP values will be based on.
             p (float): The proportion of the training data which will be used to
                        fit the KernelSHAP model. Due to the expensive
                        computation of KernelSHAP, for large datasets it may be
                        helpful to have p < 1.
+            use_summary (bool): Whether to use the summary of the SHAP values via shap.kmeans
+            k (int): The number of clusters to use for the shap.kmeans algorithm
         """
         
         # check that p is a valid proportion
@@ -302,14 +304,27 @@ class _RandomForestPlus(BaseEstimator):
         
         # get the subset of the training data to use
         np.random.seed(1)
-        n_train = trainX.shape[0]
-        trainX_subset = shap.utils.sample(trainX, int(p * n_train))
+        n_train = X_train.shape[0]
+        if use_summary:
+            X_train_summary = shap.kmeans(X_train, k)
+            if self._task == "regression":
+                ex = shap.KernelExplainer(model.predict, X_train_summary)
+            elif self._task == "classification":
+                ex = shap.KernelExplainer(model.predict_proba, X_train_summary)
+            else:
+                raise ValueError("Unknown task.")
+            shap_values = ex.shap_values(X_test)       
+        else:
+
+            X_train_subset = shap.utils.sample(X_train, int(p * n_train))
         
-        # fit the KernelSHAP model
-        shap_model = shap.KernelExplainer(self.predict, trainX_subset)
+            # fit the KernelSHAP model
+            ex = shap.KernelExplainer(self.predict, X_train_subset)
         
-        # get the SHAP values
-        shap_values = shap_model.shap_values(testX)
+            # get the SHAP values
+            shap_values = ex.shap_values(X_test)
+
+
                 
         return shap_values
     
