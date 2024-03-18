@@ -308,9 +308,9 @@ class _RandomForestPlus(BaseEstimator):
         if use_summary:
             X_train_summary = shap.kmeans(X_train, k)
             if self._task == "regression":
-                ex = shap.KernelExplainer(model.predict, X_train_summary)
+                ex = shap.KernelExplainer(self.predict, X_train_summary)
             elif self._task == "classification":
-                ex = shap.KernelExplainer(model.predict_proba, X_train_summary)
+                ex = shap.KernelExplainer(self.predict_proba, X_train_summary)
             else:
                 raise ValueError("Unknown task.")
             shap_values = ex.shap_values(X_test)       
