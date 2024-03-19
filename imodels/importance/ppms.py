@@ -266,7 +266,7 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
             # Compute regularization hyperparameter using approximate LOOCV or k-fold CV
             if isinstance(self.estimator, Ridge):
                 if self.cv_ridge == 0:
-                    self.alpha_[j] = 0.00001
+                    self.alpha_[j] = 0.000001
                 else:
                     cv = RidgeCV(alphas = self.alpha_grid, gcv_mode=self.gcv_mode,
                                 cv=self.cv_ridge)
