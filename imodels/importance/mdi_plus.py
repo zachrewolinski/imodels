@@ -414,7 +414,7 @@ class TreeMDIPlus:
             # coefs should always have the same length as the number of columns,
             # so we can use coefs[j].shape[0] to determine if we have an
             # intercept in both the loo case and the non-loo case.
-            assert coefs[j].shape[0] == loo_coefs[j].shape[1], "shapes don't agree"
+            # assert coefs[j].shape[0] == loo_coefs[j].shape[1], "shapes don't agree"
             if coefs[j].shape[0] == (blocked_data.get_all_data().shape[1] + 1):
                 # from extract_coef_and_intercept in PPM,
                 # we know that in this case, the last element is the intercept

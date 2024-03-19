@@ -58,8 +58,10 @@ class _RandomForestPlus(BaseEstimator):
 
     def __init__(self, rf_model=None, prediction_model=None, sample_split="auto",
                  include_raw=True, drop_features=True, add_transformers=None,
-                 center=True, normalize=False, cv_ridge = None):
+                 center=True, normalize=False, cv_ridge = None,
+                 calc_loo_coef = True, fit_on = "train"):
         assert sample_split in ["loo", "oob", "inbag", "auto", None]
+        assert fit_on in ["train", "test"]
         super().__init__()
         if isinstance(self, RegressorMixin):
             self._task = "regression"
@@ -74,9 +76,10 @@ class _RandomForestPlus(BaseEstimator):
                 rf_model = RandomForestClassifier()
         if prediction_model is None:
             if self._task == "regression":
-                prediction_model = RidgeRegressorPPM(cv_ridge = cv_ridge)
+                prediction_model = RidgeRegressorPPM(loo = calc_loo_coef,
+                                                     cv_ridge = cv_ridge)
             elif self._task == "classification":
-                prediction_model = LogisticClassifierPPM()
+                prediction_model = LogisticClassifierPPM(loo = calc_loo_coef)
         self.rf_model = rf_model
         self.prediction_model = prediction_model
         self.include_raw = include_raw
@@ -84,6 +87,7 @@ class _RandomForestPlus(BaseEstimator):
         self.add_transformers = add_transformers
         self.center = center
         self.normalize = normalize
+        self.fit_on = fit_on
         self._is_ppm = isinstance(prediction_model, PartialPredictionModelBase)
         self.sample_split = _get_default_sample_split(sample_split, prediction_model, self._is_ppm)
         _validate_sample_split(self.sample_split, prediction_model, self._is_ppm)
@@ -166,7 +170,10 @@ class _RandomForestPlus(BaseEstimator):
                 _get_sample_split_data(blocked_data, y, tree_model.random_state, self.sample_split)
             # fit prediction model
             if train_blocked_data.get_all_data().shape[1] != 0:  # if tree has >= 1 split
-                self.prediction_model.fit(train_blocked_data.get_all_data(), y_train, **kwargs)
+                if self.fit_on == "train":
+                    self.prediction_model.fit(train_blocked_data.get_all_data(), y_train, **kwargs)
+                else:
+                    self.prediction_model.fit(test_blocked_data.get_all_data(), y_test, **kwargs)
                 self.estimators_.append(copy.deepcopy(self.prediction_model))
                 self.transformers_.append(copy.deepcopy(transformer))
                 self._tree_random_states.append(tree_model.random_state)
