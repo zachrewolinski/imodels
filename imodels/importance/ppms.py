@@ -266,7 +266,7 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
             # Compute regularization hyperparameter using approximate LOOCV or k-fold CV
             if isinstance(self.estimator, Ridge):
                 if self.cv_ridge == 0:
-                    self.alpha_[j] = 0
+                    self.alpha_[j] = 0.000001
                 else:
                     cv = RidgeCV(alphas = self.alpha_grid, gcv_mode=self.gcv_mode,
                                 cv=self.cv_ridge)
@@ -275,7 +275,7 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
             else:
                 self.alpha_[j] = self._get_aloocv_alpha(X, yj)
             # Fit the model on the training set and compute the coefficients
-            if self.loo and self.cv_ridge == None:
+            if self.loo:
                 self.loo_coefficients_[j] = \
                     self._fit_loo_coefficients(X, yj, self.alpha_[j])
                 self.coefficients_[j] = _extract_coef_and_intercept(self.estimator)
@@ -300,7 +300,7 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         # print("IN 'predict_loo' method of _GlmPPM")
         preds_list = []
         for j in range(self._n_outputs):
-            if self.loo and self.cv_ridge == None:
+            if self.loo:
                 preds_j = _get_preds(X, self.loo_coefficients_[j], self.inv_link_fn)
             else:
                 preds_j = _get_preds(X, self.coefficients_[j], self.inv_link_fn)
