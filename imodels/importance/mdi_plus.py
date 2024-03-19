@@ -568,7 +568,11 @@ def _validate_sample_split(sample_split, prediction_model, is_ppm):
         if prediction_model.loo:
             raise ValueError("Cannot use LOO together with OOB or in-bag sample splitting.")
 
+def _get_sample_split_data(blocked_data, y, random_state):
+    in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, in_bag_indices, oob_indices = _blocked_train_test_split(blocked_data,y,random_state)
+    return in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, in_bag_indices,oob_indices
 
+'''
 def _get_sample_split_data(blocked_data, y, random_state, sample_split):
     # print("IN '_get_sample_split_data' METHOD WITHIN THE TREE MDI PLUS OBJECT")
     if sample_split == "oob":
@@ -584,3 +588,4 @@ def _get_sample_split_data(blocked_data, y, random_state, sample_split):
         y_train = y_test = y
         test_indices = np.arange(y.shape[0])
     return train_blocked_data, test_blocked_data, y_train, y_test, test_indices
+'''
