@@ -65,21 +65,21 @@ class ForestMDIPlus:
     """
 
     def __init__(self, estimators, transformers, scoring_fns, local_scoring_fns=False,
-                 sample_split="loo", tree_random_states=None, mode="keep_k",
+                 sample_split="loo", tree_random_states=None, mode="keep_k", choose_reg_param = "loo",
                  task="regression", center=True, normalize=False,version="all"):
         assert version == "all" or version == "sub"
-        assert sample_split in ["loo", "oob", "inbag", None]
+        #assert sample_split in ["loo", "oob", "inbag", None]
         assert mode in ["keep_k", "keep_rest"]
         assert task in ["regression", "classification"]
-        # print("CREATING FOREST MDI PLUS OBJECT")
         self.estimators = estimators
         self.transformers = transformers
         self.scoring_fns = scoring_fns
         self.local_scoring_fns = local_scoring_fns
-        self.sample_split = sample_split
+        self.choose_reg_param = choose_reg_param    
+        #self.sample_split = sample_split
         self.tree_random_states = tree_random_states
-        if self.sample_split in ["oob", "inbag"] and not self.tree_random_states:
-            raise ValueError("Must specify tree_random_states to use 'oob' or 'inbag' sample_split.")
+        #if self.sample_split in ["oob", "inbag"] and not self.tree_random_states:
+        #    raise ValueError("Must specify tree_random_states to use 'oob' or 'inbag' sample_split.")
         self.mode = mode
         self.task = task
         self.center = center
@@ -410,11 +410,13 @@ class TreeMDIPlus:
         scores: pd.DataFrame of shape (n_features, n_scoring_fns)
             The MDI+ feature importances.
         """
-        # print("IN 'get_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
         if lfi:
             return self._fit_local_importance_scores(X, y, train_or_test)
         else:
             return self._fit_global_importance_scores(X, y)
+        
+        
+        
         # self._fit_importance_scores(X, y, train_or_test)
         # if self.local_scoring_fns:
         #     return {"global": self.feature_importances_,
@@ -467,10 +469,9 @@ class TreeMDIPlus:
         lfi_matrix = np.zeros((blocked_data.get_all_data().shape[0], X.shape[1]))
         for j in range(self.estimator._n_outputs):
             if coefs[j].shape[0] == (blocked_data.get_all_data().shape[1] + 1):
-                # from extract_coef_and_intercept in PPM,
-                # we know that in this case, the last element is the intercept
+               
                 if train_or_test == "train" and loo_coefs is not None:
-                    intercept = loo_coefs[j][:,-1]
+                    intercept = loo_coefs[j][:,-1]  # from extract_coef_and_intercept in PPM, last element is intercept
                     coefs_j = loo_coefs[j][:,:-1]
                 else:
                     intercept = coefs[j][-1]

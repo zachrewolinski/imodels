@@ -8,7 +8,7 @@ from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
-from sklearn.metrics import r2_score, roc_auc_score, log_loss
+from sklearn.metrics import r2_score, roc_auc_score, log_loss, mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import train_test_split
@@ -23,8 +23,7 @@ from imodels.importance.ppms import PartialPredictionModelBase, GlmClassifierPPM
 from imodels.importance.mdi_plus import ForestMDIPlus, \
     _get_default_sample_split, _validate_sample_split, _get_sample_split_data
 from functools import reduce
-from sklearn.metrics import r2_score, mean_absolute_error, mean_squared_error
-
+from imodels.importance.utils import _fast_r2_score, _neg_log_loss
 
 class _RandomForestPlus(BaseEstimator):
     """
@@ -402,24 +401,7 @@ class _RandomForestPlus(BaseEstimator):
                 shap_values = abs(shap_values)
                 
         return shap_values
-    
-    # def get_shap_scores(self, trainX: np.ndarray, testX: np.ndarray, max_samples: float = 1000):
-    #     """
-    #     Obtain SHAP feature importances.
-
-    #     Inputs:
-    #         trainX (np.ndarray): The training covariate matrix. This is
-    #                              necessary to fit the SHAP model.
-    #         testX (np.ndarray): The testing covariate matrix. This is the data
-    #                             the resulting SHAP values will be based on.
-    #         max_samples (float): The maximum number of samples to use from the
-    #                              passed background data.
-    #     """
-        
-    #     background = shap.maskers.Independent(trainX, max_samples=max_samples)
-    #     explainer = shap.Explainer(self.predict, background)
-    #     shap_values = explainer(testX)
-    #     return shap_values.values
+   
     
     def get_lime_scores(self, X_train: np.ndarray,
                         X_test: np.ndarray) -> np.ndarray:
@@ -723,54 +705,6 @@ class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
     """
     ...
 
-def _fast_r2_score(y_true, y_pred, multiclass=False):
-    """
-    Evaluates the r-squared value between the observed and estimated responses.
-    Equivalent to sklearn.metrics.r2_score but without the robust error
-    checking, thus leading to a much faster implementation (at the cost of
-    this error checking). For multi-class responses, returns the mean
-    r-squared value across each column in the response matrix.
-
-    Parameters
-    ----------
-    y_true: array-like of shape (n_samples, n_targets)
-        Observed responses.
-    y_pred: array-like of shape (n_samples, n_targets)
-        Predicted responses.
-    multiclass: bool
-        Whether or not the responses are multi-class.
-
-    Returns
-    -------
-    Scalar quantity, measuring the r-squared value.
-    """
-    numerator = ((y_true - y_pred) ** 2).sum(axis=0, dtype=np.float64)
-    denominator = ((y_true - np.mean(y_true, axis=0)) ** 2). \
-        sum(axis=0, dtype=np.float64)
-    if multiclass:
-        return np.mean(1 - numerator / denominator)
-    else:
-        return 1 - numerator / denominator
-
-
-def _neg_log_loss(y_true, y_pred):
-    """
-    Evaluates the negative log-loss between the observed and
-    predicted responses.
-
-    Parameters
-    ----------
-    y_true: array-like of shape (n_samples, n_targets)
-        Observed responses.
-    y_pred: array-like of shape (n_samples, n_targets)
-        Predicted probabilies.
-
-    Returns
-    -------
-    Scalar quantity, measuring the negative log-loss value.
-    """
-    return -log_loss(y_true, y_pred)
-
 
 
 
@@ -788,6 +722,29 @@ if __name__ == "__main__":
     rf_plus.fit(X_train, y_train)
     pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
 
+    #test get local scores
+    lfi = print(type(rf_plus.estimators_[0]))
+    #get_local_mdi_plus(X_test, y_test, train_or_test="test")
+
+
+ 
+    # def get_shap_scores(self, trainX: np.ndarray, testX: np.ndarray, max_samples: float = 1000):
+    #     """
+    #     Obtain SHAP feature importances.
+
+    #     Inputs:
+    #         trainX (np.ndarray): The training covariate matrix. This is
+    #                              necessary to fit the SHAP model.
+    #         testX (np.ndarray): The testing covariate matrix. This is the data
+    #                             the resulting SHAP values will be based on.
+    #         max_samples (float): The maximum number of samples to use from the
+    #                              passed background data.
+    #     """
+        
+    #     background = shap.maskers.Independent(trainX, max_samples=max_samples)
+    #     explainer = shap.Explainer(self.predict, background)
+    #     shap_values = explainer(testX)
+    #     return shap_values.values
 
 
 
