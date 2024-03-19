@@ -17,6 +17,7 @@ from imodels.importance.ppms import PartialPredictionModelBase, GlmClassifierPPM
     RidgeRegressorPPM, LogisticClassifierPPM
 from imodels.importance.mdi_plus import ForestMDIPlus, \
     _get_default_sample_split, _validate_sample_split, _get_sample_split_data
+from functools import reduce
 
 
 class _RandomForestPlus(BaseEstimator):
@@ -330,7 +331,13 @@ class _RandomForestPlus(BaseEstimator):
             
             # get shap values from the KernelExplainer
             shap_values = ex.shap_values(X_test)       
-        
+            if self._task == "classification":
+                def add_abs(a, b):
+                    return abs(a) + abs(b)
+                shap_values = reduce(add_abs, shap_values)
+            else:
+                shap_values = abs(shap_values)
+
         # if we have the time for extra computation, we can use the standard way
         else:
 
@@ -343,6 +350,12 @@ class _RandomForestPlus(BaseEstimator):
         
             # get the SHAP values
             shap_values = ex.shap_values(X_test)
+            if self._task == "classification":
+                def add_abs(a, b):
+                    return abs(a) + abs(b)
+                shap_values = reduce(add_abs, shap_values)
+            else:
+                shap_values = abs(shap_values)
                 
         return shap_values
     
