@@ -199,11 +199,8 @@ class ForestMDIPlus:
         if single_scoring_fn:
             stability_df = stability_df.drop(columns=["scorer"])
         return stability_df
-
-    def _fit_importance_scores(self, X, y):
-        all_scores = []
-        all_full_preds = []
-        all_local_scores = []
+    
+    def _fit_local_importance_scores(self, X, y):
         num_iters = len(list(zip(self.estimators, self.transformers, self.tree_random_states)))
         lfi_matrix_lst = list()
         for estimator, transformer, tree_random_state in \
@@ -221,7 +218,38 @@ class ForestMDIPlus:
                                         version=self.version,
                                         num_iters=num_iters,
                                         lfi_abs=self.lfi_abs)
-            scores = tree_mdi_plus.get_scores(X, y, self.train_or_test)
+            scores = tree_mdi_plus.get_scores(X, y, self.lfi, self.train_or_test)
+            lfi_matrix_lst.append(scores)
+        stacked_lfi_matrices = np.stack(lfi_matrix_lst, axis=0)
+        average_lfi_matrix = np.mean(stacked_lfi_matrices, axis=0)
+        return pd.DataFrame(average_lfi_matrix)
+    
+    def _fit_global_importance_scores(self, X, y):
+        pass
+
+    def _fit_importance_scores(self, X, y):
+        all_scores = []
+        all_full_preds = []
+        all_local_scores = []
+        # TODO: do we need num_iters?
+        num_iters = len(list(zip(self.estimators, self.transformers, self.tree_random_states)))
+        lfi_matrix_lst = list()
+        for estimator, transformer, tree_random_state in \
+                zip(self.estimators, self.transformers, self.tree_random_states):
+            tree_mdi_plus = TreeMDIPlus(estimator=estimator,
+                                        transformer=transformer,
+                                        scoring_fns=self.scoring_fns,
+                                        local_scoring_fns=self.local_scoring_fns,
+                                        sample_split=self.sample_split,
+                                        tree_random_state=tree_random_state,
+                                        mode=self.mode,
+                                        task=self.task,
+                                        center=self.center,
+                                        normalize=self.normalize,
+                                        version=self.version,
+                                        num_iters=num_iters,
+                                        lfi_abs=self.lfi_abs)
+            scores = tree_mdi_plus.get_scores(X, y, self.lfi, self.train_or_test)
             lfi_matrix_lst.append(tree_mdi_plus.lfi_matrix)
             if scores is not None:
                 if self.local_scoring_fns:
@@ -319,11 +347,11 @@ class TreeMDIPlus:
     """
 
     def __init__(self, estimator, transformer, scoring_fns, local_scoring_fns=False,
-                 sample_split="loo", tree_random_state=None, mode="keep_k",
+                 choose_reg_param = "loo", tree_random_state=None, mode="keep_k",
                  task="regression", center=True, normalize=False,version="all",
                  num_iters=-1, lfi_abs="inside"):
         assert version == "all" or version == "sub"
-        assert sample_split in ["loo", "oob", "inbag", "auto", None]
+        # assert sample_split in ["loo", "oob", "inbag", "auto", None]
         assert mode in ["keep_k", "keep_rest"]
         assert task in ["regression", "classification"]
         # print("CREATING TREE MDI PLUS OBJECT")
@@ -333,15 +361,15 @@ class TreeMDIPlus:
         self.num_iters = num_iters
         self.scoring_fns = scoring_fns
         self.local_scoring_fns = local_scoring_fns
-        self.sample_split = sample_split
+        # self.sample_split = sample_split
         self.tree_random_state = tree_random_state
-        _validate_sample_split(self.sample_split, self.estimator, isinstance(self.estimator, PartialPredictionModelBase))
-        if self.sample_split in ["oob", "inbag"] and not self.tree_random_state:
-            raise ValueError("Must specify tree_random_state to use 'oob' or 'inbag' sample_split.")
-        if isinstance(self.estimator, _GlmPPM):
-            if self.estimator.loo and self.sample_split != "loo":
-                # print('Not calculating loo coefs')
-                self.estimator.loo = False
+        # _validate_sample_split(self.sample_split, self.estimator, isinstance(self.estimator, PartialPredictionModelBase))
+        # if self.sample_split in ["oob", "inbag"] and not self.tree_random_state:
+        #     raise ValueError("Must specify tree_random_state to use 'oob' or 'inbag' sample_split.")
+        # if isinstance(self.estimator, _GlmPPM):
+        #     if self.estimator.loo and self.sample_split != "loo":
+        #         # print('Not calculating loo coefs')
+        #         self.estimator.loo = False
         self.mode = mode
         self.task = task
         self.center = center
@@ -365,7 +393,7 @@ class TreeMDIPlus:
         self.feature_importances_ = None
         self.feature_importances_local_ = None
 
-    def get_scores(self, X, y, train_or_test):
+    def get_scores(self, X, y, lfi, train_or_test):
         """
         Obtain the MDI+ feature importances for a single tree.
 
@@ -383,12 +411,101 @@ class TreeMDIPlus:
             The MDI+ feature importances.
         """
         # print("IN 'get_scores' METHOD WITHIN THE TREE MDI PLUS OBJECT")
-        self._fit_importance_scores(X, y, train_or_test)
-        if self.local_scoring_fns:
-            return {"global": self.feature_importances_,
-                    "local": self.feature_importances_local_}
+        if lfi:
+            return self._fit_local_importance_scores(X, y, train_or_test)
         else:
-            return self.feature_importances_
+            return self._fit_global_importance_scores(X, y)
+        # self._fit_importance_scores(X, y, train_or_test)
+        # if self.local_scoring_fns:
+        #     return {"global": self.feature_importances_,
+        #             "local": self.feature_importances_local_}
+        # else:
+        #     return self.feature_importances_
+        
+    def _fit_global_importance_scores(self, X, y):
+        
+        blocked_data = self.transformer.transform(X, center=self.center,
+                                                  normalize=self.normalize)
+        
+        self.n_features = blocked_data.n_blocks
+        # train_blocked_data, test_blocked_data, y_train, y_test, test_indices
+        in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, in_bag_indices,oob_indices = \
+            _get_sample_split_data(blocked_data, y, self.tree_random_state, self.sample_split)
+        if train_blocked_data.get_all_data().shape[1] != 0:
+            if hasattr(self.estimator, "predict_full") and \
+                    hasattr(self.estimator, "predict_partial"):
+                full_preds = self.estimator.predict_full(test_blocked_data)
+                partial_preds = self.estimator.predict_partial(test_blocked_data, mode=self.mode, zero_values=zero_values)
+            else:
+                if self.task == "regression":
+                    ppm = GenericRegressorPPM(self.estimator)
+                elif self.task == "classification":
+                    ppm = GenericClassifierPPM(self.estimator)
+                full_preds = ppm.predict_full(test_blocked_data)
+                partial_preds = ppm.predict_partial(test_blocked_data, mode=self.mode)
+            self._score_full_predictions(y_test, full_preds)
+            self._score_partial_predictions(y_test, full_preds, partial_preds)
+
+            full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 \
+                else np.empty((n_samples, full_preds.shape[1]))
+            full_preds_n[:] = np.nan
+            full_preds_n[test_indices] = full_preds
+            self._full_preds = full_preds_n
+        self.is_fitted = True
+        
+    def _fit_local_importance_scores(self, X, y, train_or_test):
+        
+        # check for input validity
+        assert train_or_test in ["train", "test"], \
+            "invalid value for train_or_test"
+            
+        blocked_data = self.transformer.transform(X, center=self.center,
+                                                  normalize=self.normalize)
+        
+        coefs = self.estimator.coefficients_
+        loo_coefs = self.estimator.loo_coefficients_
+        lfi_matrix = np.zeros((blocked_data.get_all_data().shape[0], X.shape[1]))
+        for j in range(self.estimator._n_outputs):
+            if coefs[j].shape[0] == (blocked_data.get_all_data().shape[1] + 1):
+                # from extract_coef_and_intercept in PPM,
+                # we know that in this case, the last element is the intercept
+                if train_or_test == "train" and loo_coefs is not None:
+                    intercept = loo_coefs[j][:,-1]
+                    coefs_j = loo_coefs[j][:,:-1]
+                else:
+                    intercept = coefs[j][-1]
+                    coefs_j = coefs[j][:-1]
+            else:
+                if train_or_test == "train" and loo_coefs is not None:
+                    coefs_j = loo_coefs[j]
+                else:
+                    coefs_j = coefs[j]
+            coef_idx = 0
+            for k in range(blocked_data.n_blocks):
+                block_k = blocked_data.get_block(k)
+                if train_or_test == "train":
+                    if self.lfi_abs == "inside":
+                        lfi_matrix[:, k] = np.diagonal(np.abs(block_k) @ np.abs(np.transpose(coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
+                    elif self.lfi_abs == "outside":
+                        lfi_matrix[:, k] = np.abs(np.diagonal(block_k @ np.transpose(coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])))
+                    elif self.lfi_abs == "none":
+                        lfi_matrix[:, k] = np.diagonal(block_k @ np.transpose(coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])) - \
+                            np.mean(block_k, axis = 0) @ np.transpose(coefs_j[:, coef_idx:(coef_idx + block_k.shape[1])])
+                    else:
+                        ValueError("lfi_abs must be either 'inside', 'outside', or 'none'.")
+                else:
+                    if self.lfi_abs == "inside":
+                        lfi_matrix[:, k] = np.abs(block_k) @ np.abs(coefs_j[coef_idx:(coef_idx + block_k.shape[1])])
+                    elif self.lfi_abs == "outside":
+                        lfi_matrix[:, k] = np.abs(block_k @ coefs_j[coef_idx:(coef_idx + block_k.shape[1])])
+                    elif self.lfi_abs == "none":
+                        lfi_matrix[:, k] = block_k @ coefs_j[coef_idx:(coef_idx + block_k.shape[1])] - \
+                            np.mean(block_k, axis = 0) @ coefs_j[coef_idx:(coef_idx + block_k.shape[1])]
+                    else:
+                        ValueError("lfi_abs must be either 'inside', 'outside', or 'none'.")
+                coef_idx += block_k.shape[1]
+            # print("equal:", np.allclose(lfi_matrix, lfi2_matrix))
+        return lfi_matrix
 
     def _fit_importance_scores(self, X, y, train_or_test):
         assert train_or_test in ["train", "test"], "invalid value for train_or_test"

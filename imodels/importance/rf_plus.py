@@ -70,7 +70,7 @@ class _RandomForestPlus(BaseEstimator):
         #assert sample_split in ["loo", "oob", "inbag", "auto", None]
         #assert fit_on in ["train", "test"]
         assert fit_on in ["inbag","oob","all","auto"]
-        assert (choose_reg_param == "loo") or (isinstance(x, int) and x >= 0), "choose_reg_param must be either 'loo' or a non-negative integer"
+        assert (choose_reg_param == "loo") or (isinstance(choose_reg_param, int) and choose_reg_param >= 0), "choose_reg_param must be either 'loo' or a non-negative integer"
         # Rest of the function code
         super().__init__()
         if isinstance(self, RegressorMixin):
@@ -467,6 +467,47 @@ class _RandomForestPlus(BaseEstimator):
                                        i in range(num_features)])
 
         return lime_values
+    
+    def _check_data(self, X=None, y=None):
+        if X is None or y is None:
+            if self.mdi_plus_scores_ is None:
+                raise ValueError("Need X and y as inputs.")
+        else:
+            # convert data frame to array
+            if isinstance(X, pd.DataFrame):
+                if self.feature_names_ is not None:
+                    X_array = X.loc[:, self.feature_names_].values
+                else:
+                    X_array = X.values
+            elif isinstance(X, np.ndarray):
+                X_array = X
+            else:
+                raise ValueError("Input X must be a pandas DataFrame or numpy array.")
+            if isinstance(y, pd.DataFrame):
+                y = y.values.ravel()
+            elif not isinstance(y, np.ndarray):
+                raise ValueError("Input y must be a pandas DataFrame or numpy array.")            
+            # onehot encode if multi-class for GlmClassiferPPM
+            if isinstance(self.prediction_model, GlmClassifierPPM):
+                if self._multi_class:
+                    y = self._y_encoder.transform(y.reshape(-1, 1)).toarray()
+        return X_array, y        
+    
+    def get_local_mdi_plus(self, X=None, y=None, lfi_abs="none",
+                           train_or_test="train"):
+        X_array, y = self._check_data(X, y)
+        # compute MDI+ for forest
+        mdi_plus_obj = ForestMDIPlus(estimators=self.estimators_,
+                                        transformers=self.transformers_,
+                                        scoring_fns=None,
+                                        tree_random_states=self._tree_random_states,
+                                        task=self._task,
+                                        center=self.center,
+                                        normalize=self.normalize)
+        self.mdi_plus_ = mdi_plus_obj
+        mdi_plus_scores = mdi_plus_obj.get_scores(X_array, y, lfi=True,
+                                                  lfi_abs=lfi_abs,
+                                                  train_or_test=train_or_test)
 
     def get_mdi_plus_scores(self, X=None, y=None,
                             scoring_fns="auto", local_scoring_fns=False,
@@ -681,7 +722,6 @@ class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
     mean decrease in impurity (MDI+). For more details, refer to [paper].
     """
     ...
-
 
 def _fast_r2_score(y_true, y_pred, multiclass=False):
     """
