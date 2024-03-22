@@ -16,14 +16,12 @@ from tqdm import tqdm
 from joblib import Parallel, delayed
 import multiprocessing
 from sklearn.datasets import load_diabetes, load_breast_cancer
-from imodels.importance.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, \
-    CompositeTransformer, IdentityTransformer
-from imodels.importance.ppms import PartialPredictionModelBase, GlmClassifierPPM, \
-    RidgeRegressorPPM, LogisticClassifierPPM
-from imodels.importance.mdi_plus import ForestMDIPlus, \
-    _get_default_sample_split, _validate_sample_split, _get_sample_split_data
+from imodels.importance.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
+from imodels.importance.ppms import RidgeRegressorPPM, LogisticClassifierPPM
+from imodels.importance.mdi_plus import ForestMDIPlus, _get_default_sample_split, _validate_sample_split, _get_sample_split_data
 from functools import reduce
-from imodels.importance.utils import _fast_r2_score, _neg_log_loss
+from imodels.importance.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus
+from imodels.importance.ppms_base import *
 
 class _RandomForestPlus(BaseEstimator):
     """
@@ -64,8 +62,8 @@ class _RandomForestPlus(BaseEstimator):
 
     def __init__(self, rf_model=None, prediction_model=None,
                  include_raw=True, drop_features=True, add_transformers=None,
-                 center=True, normalize=False, cv_ridge = None, n_jobs = -1,
-                 calc_loo_coef = True, fit_on = "auto",choose_reg_param = "loo"):
+                 center=True, normalize=False, cv_ridge = None, n_jobs = -1, 
+                fit_on = "auto",choose_reg_param = "loo"):
         #assert sample_split in ["loo", "oob", "inbag", "auto", None]
         #assert fit_on in ["train", "test"]
         assert fit_on in ["inbag","oob","all","auto"]
@@ -85,10 +83,11 @@ class _RandomForestPlus(BaseEstimator):
                 rf_model = RandomForestClassifier()
         if prediction_model is None:
             if self._task == "regression":
-                prediction_model = RidgeRegressorPPM(loo = calc_loo_coef)
+                prediction_model = RidgeRegressorPPM(loo=choose_reg_param)
             elif self._task == "classification":
-                prediction_model = LogisticClassifierPPM(loo = calc_loo_coef)
+                prediction_model = LogisticClassifierPPM(loo=choose_reg_param)
         self.rf_model = rf_model
+        self.random_state = rf_model.random_state
         self.prediction_model = prediction_model
         self.include_raw = include_raw
         self.drop_features = drop_features
@@ -102,6 +101,7 @@ class _RandomForestPlus(BaseEstimator):
         self.choose_reg_param = choose_reg_param
         self.n_jobs = n_jobs
         self._is_ppm = isinstance(prediction_model, PartialPredictionModelBase)
+        
         #self.sample_split = _get_default_sample_split(sample_split, prediction_model, self._is_ppm)
         #_validate_sample_split(self.sample_split, prediction_model, self._is_ppm)
 
@@ -179,53 +179,38 @@ class _RandomForestPlus(BaseEstimator):
                                                    drop_features=self.drop_features)
             blocked_data = transformer.fit_transform(X_array, center=self.center, normalize=self.normalize)
             
-            # do sample split
-            #train_blocked_data, test_blocked_data, y_train, y_test, test_indices = \
-            #    _get_sample_split_data(blocked_data, y, tree_model.random_state, self.sample_split)
-
+        
             in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, inbag_indices, oob_indices = _get_sample_split_data(blocked_data, y, tree_model.random_state)
             pred_func = self._get_pred_func()
-            if self.fit_on == "inbag":
-                self.prediction_model.fit(in_bag_blocked_data.get_all_data(), y_in_bag, **kwargs)
-                full_preds = pred_func(oob_blocked_data.get_all_data())
-                full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 else np.empty((n_samples, full_preds.shape[1]))
-                full_preds_n[:] = np.nan
-                full_preds_n[oob_indices] = full_preds
-            elif self.fit_on == "oob":
-                self.prediction_model.fit(oob_blocked_data.get_all_data(), y_oob, **kwargs)
-                full_preds = pred_func(oob_blocked_data.get_all_data())
-                full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 else np.empty((n_samples, full_preds.shape[1]))
-                full_preds_n[:] = np.nan
-                full_preds_n[oob_indices] = full_preds
-            else:
-                self.prediction_model.fit(blocked_data.get_all_data(), y, **kwargs)
-                full_preds = pred_func(blocked_data.get_all_data())
-                full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 else np.empty((n_samples, full_preds.shape[1]))
-                full_preds_n[:] = np.nan
-                full_preds_n[:] = full_preds
-            return copy.deepcopy(self.prediction_model), copy.deepcopy(transformer), tree_model.random_state,full_preds_n
-
-            
-            
-            '''
-            if train_blocked_data.get_all_data().shape[1] != 0:  # if tree has >= 1 split
-                if self.fit_on == "train":
-                    #pprint.pp(f"Training on tree {i}")
-                    self.prediction_model.fit(train_blocked_data.get_all_data(), y_train, **kwargs)
+            if in_bag_blocked_data.get_all_data().shape[1] != 0:  # if tree has >= 1 split
+                if self.fit_on == "inbag":
+                    self.prediction_model.fit(in_bag_blocked_data.get_all_data(), y_in_bag, **kwargs)
+                    full_preds = pred_func(oob_blocked_data.get_all_data())
+                    full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 else np.empty((n_samples, full_preds.shape[1]))
+                    full_preds_n[:] = np.nan
+                    full_preds_n[oob_indices] = full_preds
+                elif self.fit_on == "oob":
+                    self.prediction_model.fit(oob_blocked_data.get_all_data(), y_oob, **kwargs)
+                    full_preds = pred_func(oob_blocked_data.get_all_data())
+                    full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 else np.empty((n_samples, full_preds.shape[1]))
+                    full_preds_n[:] = np.nan
+                    full_preds_n[oob_indices] = full_preds
                 else:
-                    self.prediction_model.fit(test_blocked_data.get_all_data(), y_test, **kwargs)
-            
-            pred_func = self._get_pred_func()
-            full_preds = pred_func(test_blocked_data.get_all_data())
-            full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 else np.empty((n_samples, full_preds.shape[1]))
-            full_preds_n[:] = np.nan
-            full_preds_n[test_indices] = full_preds
-            return copy.deepcopy(self.prediction_model), copy.deepcopy(transformer), tree_model.random_state,full_preds_n
-            '''
-        
-        #fit prediction error 
+                    self.prediction_model.fit(blocked_data.get_all_data(), y, **kwargs)
+                    full_preds = pred_func(blocked_data.get_all_data())
+                    full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 else np.empty((n_samples, full_preds.shape[1]))
+                    full_preds_n[:] = np.nan
+                    full_preds_n[:] = full_preds
+                return copy.deepcopy(self.prediction_model), copy.deepcopy(transformer), tree_model.random_state,full_preds_n
+            else:
+                pprint.pprint("Tree has no splits!")
+                return None,None,None,None 
+
+
+        #get prediction error 
         results = Parallel(n_jobs=self.n_jobs)(delayed(parallel_fit_helper)(tree_model) for tree_model in self.rf_model.estimators_)
         for result in results:
+            
             self.estimators_.append(result[0])
             self.transformers_.append(result[1])
             self._tree_random_states.append(result[2])
@@ -245,10 +230,7 @@ class _RandomForestPlus(BaseEstimator):
         self.prediction_score_ = pd.DataFrame({pred_score_name: [pred_score]})
         self._full_preds = full_preds
         
-    def par_helper(self, estimator, transformer, data):
-        blocked_data = transformer.transform(data, center=self.center, normalize=self.normalize)
-        predictions = estimator.predict(blocked_data.get_all_data())
-        return predictions
+    
 
     def predict(self, X):
         """
@@ -276,16 +258,16 @@ class _RandomForestPlus(BaseEstimator):
             X_array = X
         else:
             raise ValueError("Input X must be a pandas DataFrame or numpy array.")
+        
+        def parallel_predict_helper(estimator, transformer, data):
+            blocked_data = transformer.transform(data, center=self.center, normalize=self.normalize)
+            predictions = estimator.predict(blocked_data.get_all_data())
+            return predictions
 
         if self._task == "regression":
-            # predictions = Parallel(n_jobs=2)(delayed(self.par_helper)(self.estimators_[i], self.transformers_[i], X_array) for i in range(len(self.estimators_)))
-            # predictions = np.mean(predictions, axis=0)
-            predictions = 0
-            for estimator, transformer in zip(self.estimators_, self.transformers_):
-                blocked_data = transformer.transform(X_array, center=self.center, normalize=self.normalize)
-                predictions += estimator.predict(blocked_data.get_all_data())
-            predictions = predictions / len(self.estimators_)
-            # print("PREDICTIONS ARE EQUIVALENT:", np.allclose(predictions, predictions1))
+            predictions = Parallel(n_jobs=self.n_jobs)(delayed(parallel_predict_helper)(self.estimators_[i], self.transformers_[i], X_array) 
+                                                       for i in range(len(self.estimators_)))
+            predictions = np.mean(predictions, axis=0)
         elif self._task == "classification":
             prob_predictions = self.predict_proba(X_array)
             if prob_predictions.ndim == 1:
@@ -324,13 +306,23 @@ class _RandomForestPlus(BaseEstimator):
             X_array = X
         else:
             raise ValueError("Input X must be a pandas DataFrame or numpy array.")
+        
+        def parallel_predict_proba_helper(estimator, transformer, data):
+            blocked_data = transformer.transform(data, center=self.center, normalize=self.normalize)
+            predictions = estimator.predict_proba(blocked_data.get_all_data())
+            return predictions
 
-        predictions = 0
-        for estimator, transformer in zip(self.estimators_, self.transformers_):
-            blocked_data = transformer.transform(X_array, center=self.center, normalize=self.normalize)
-            predictions += estimator.predict_proba(blocked_data.get_all_data())
-        predictions = predictions / len(self.estimators_)
+        predictions = Parallel(n_jobs=self.n_jobs)(delayed(parallel_predict_proba_helper)(self.estimators_[i], self.transformers_[i], X_array)
+                                                   for i in range(len(self.estimators_)))
+        predictions = np.mean(np.stack(predictions), axis=0)
         return predictions
+        
+        
+        # for estimator, transformer in zip(self.estimators_, self.transformers_):
+        #     blocked_data = transformer.transform(X_array, center=self.center, normalize=self.normalize)
+        #     predictions += estimator.predict_proba(blocked_data.get_all_data())
+        # predictions = predictions / len(self.estimators_)
+        # return predictions
     
     def get_kernel_shap_scores(self, X_train: np.ndarray, X_test: np.ndarray,
                                p: float = 1, use_summary: bool = True,
@@ -351,129 +343,22 @@ class _RandomForestPlus(BaseEstimator):
                                 via shap.kmeans
             k (int): The number of clusters to use for the shap.kmeans algorithm
         """
-        
-        # check that p is a valid proportion
-        assert 0 < p <= 1, "p must be in the interval (0, 1]"
-        
-        # get the subset of the training data to use
-        np.random.seed(1)
-        
-        # for faster computation, we may want to use shap.kmeans
-        if use_summary:
-            
-            # obtain summary of the training data
-            X_train_summary = shap.kmeans(X_train, k)
-            
-            # choose predict function depending on the task
-            if self._task == "regression":
-                ex = shap.KernelExplainer(self.predict, X_train_summary)
-            elif self._task == "classification":
-                ex = shap.KernelExplainer(self.predict_proba, X_train_summary)
-            else:
-                raise ValueError("Unknown task.")
-            
-            # get shap values from the KernelExplainer
-            shap_values = ex.shap_values(X_test)       
-            if self._task == "classification":
-                def add_abs(a, b):
-                    return abs(a) + abs(b)
-                shap_values = reduce(add_abs, shap_values)
-            else:
-                shap_values = abs(shap_values)
+        if self._task == "regression": 
+            model_pred_func = self.predict 
+        else: 
+            model_pred_func = self.predict_proba
+        return _get_kernel_shap_rf_plus(model_pred_func,self._task,X_train,X_test,p,use_summary,k, self.random_state)
 
-        # if we have the time for extra computation, we can use the standard way
+    def get_lime_scores(self, X_train: np.ndarray, X_test: np.ndarray):
+
+        if self._task == "regression": 
+            model_pred_func = self.predict
         else:
-
-            # obtain subset of X_train
-            X_train_subset = shap.utils.sample(X_train,
-                                               int(p * X_train.shape[0]))
-        
-            # fit the KernelSHAP model
-            ex = shap.KernelExplainer(self.predict, X_train_subset)
-        
-            # get the SHAP values
-            shap_values = ex.shap_values(X_test)
-            if self._task == "classification":
-                def add_abs(a, b):
-                    return abs(a) + abs(b)
-                shap_values = reduce(add_abs, shap_values)
-            else:
-                shap_values = abs(shap_values)
-                
-        return shap_values
-   
+            model_pred_func = self.predict_proba
+        return _get_lime_scores_rf_plus(model_pred_func,self._task,X_train,X_test,self.random_state)
     
-    def get_lime_scores(self, X_train: np.ndarray,
-                        X_test: np.ndarray) -> np.ndarray:
-        """
-        Obtain LIME feature importances.
-
-        Inputs:
-            X_train (np.ndarray): The training covariate matrix. This is
-                                 necessary to fit the LIME model.
-            X_test (np.ndarray): The testing covariate matrix. This is the data
-                                the resulting LIME values will be based on.
-            num_samples (int): The number of samples to use when fitting the
-                               LIME model.
-        """
-        
-        # set seed for reproducibility
-        np.random.seed(1)
-        
-        # get shape of X_test
-        num_samples, num_features = X_test.shape
-        
-        # create data structure to save scores in
-        result = np.zeros((num_samples, num_features))
-        
-        # initialize the LIME explainer
-        explainer = lime.lime_tabular.LimeTabularExplainer(X_train,
-                                                           verbose=False,
-                                                           mode=self._task)
-        if self._task == "regression":
-            predict_fn = self.predict
-        elif self._task == "classification":
-            predict_fn = self.predict_proba
-        else:
-            raise ValueError("Unknown task.")
-        for i in range(num_samples):
-            exp = explainer.explain_instance(X_test[i,:], predict_fn,
-                                             num_features=num_features)
-            original_feature_importance = exp.as_map()[1]
-            sorted_feature_importance = sorted(original_feature_importance,
-                                               key = lambda x: x[0])
-            for j in range(num_features):
-                result[i,j] = abs(sorted_feature_importance[j][1])
-        # Convert the array to a DataFrame
-        lime_values = pd.DataFrame(result, columns=[f'Feature_{i}' for \
-                                       i in range(num_features)])
-
-        return lime_values
     
-    def _check_data(self, X=None, y=None):
-        if X is None or y is None:
-            if self.mdi_plus_scores_ is None:
-                raise ValueError("Need X and y as inputs.")
-        else:
-            # convert data frame to array
-            if isinstance(X, pd.DataFrame):
-                if self.feature_names_ is not None:
-                    X_array = X.loc[:, self.feature_names_].values
-                else:
-                    X_array = X.values
-            elif isinstance(X, np.ndarray):
-                X_array = X
-            else:
-                raise ValueError("Input X must be a pandas DataFrame or numpy array.")
-            if isinstance(y, pd.DataFrame):
-                y = y.values.ravel()
-            elif not isinstance(y, np.ndarray):
-                raise ValueError("Input y must be a pandas DataFrame or numpy array.")            
-            # onehot encode if multi-class for GlmClassiferPPM
-            if isinstance(self.prediction_model, GlmClassifierPPM):
-                if self._multi_class:
-                    y = self._y_encoder.transform(y.reshape(-1, 1)).toarray()
-        return X_array, y        
+    
     
     def get_local_mdi_plus(self, X=None, y=None, lfi_abs="none",
                            train_or_test="train"):
@@ -686,6 +571,31 @@ class _RandomForestPlus(BaseEstimator):
         else:
             pred_func = self.prediction_model.predict
         return pred_func
+    
+    def _check_data(self, X=None, y=None):
+        if X is None or y is None:
+            if self.mdi_plus_scores_ is None:
+                raise ValueError("Need X and y as inputs.")
+        else:
+            # convert data frame to array
+            if isinstance(X, pd.DataFrame):
+                if self.feature_names_ is not None:
+                    X_array = X.loc[:, self.feature_names_].values
+                else:
+                    X_array = X.values
+            elif isinstance(X, np.ndarray):
+                X_array = X
+            else:
+                raise ValueError("Input X must be a pandas DataFrame or numpy array.")
+            if isinstance(y, pd.DataFrame):
+                y = y.values.ravel()
+            elif not isinstance(y, np.ndarray):
+                raise ValueError("Input y must be a pandas DataFrame or numpy array.")            
+            # onehot encode if multi-class for GlmClassiferPPM
+            if isinstance(self.prediction_model, GlmClassifierPPM):
+                if self._multi_class:
+                    y = self._y_encoder.transform(y.reshape(-1, 1)).toarray()
+        return X_array, y        
 
 
 class RandomForestPlusRegressor(_RandomForestPlus, RegressorMixin):
@@ -710,43 +620,53 @@ class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
 
 if __name__ == "__main__":
 
+    test_size = 0.2
+    n_jobs = 1
     #test regression
     X, y = load_diabetes(return_X_y=True)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=1,)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=1,)
 
-    rf = RandomForestRegressor(min_samples_leaf=5,max_features=0.33,random_state=1)
+    pprint.pprint(f"Shape: {X_train.shape}")
+
+    rf = RandomForestRegressor(n_estimators=3,min_samples_leaf=5,max_features=0.33,random_state=1)
     rf.fit(X_train, y_train)
     pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
 
-    rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf),n_jobs=1)
+    rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf),n_jobs = n_jobs)
     rf_plus.fit(X_train, y_train)
     pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
 
+    #test get regression shap scores
+    #shap_values = rf_plus.get_kernel_shap_scores(X_train, X_test) 
+    #test get regression LIME scores
+    #lime_values = rf_plus.get_lime_scores(X_train, X_test)
+
+    # #test classification
+    # X, y = load_breast_cancer(return_X_y=True)
+    # print(X_test.shape)
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=1)
+    # rf_clf = RandomForestClassifier(n_estimators=3,min_samples_leaf=1,max_features="sqrt",random_state=1)
+    # rf_clf.fit(X_train, y_train)
+    # pprint.pprint(f"RF roc_auc_score: {roc_auc_score(y_test,rf_clf.predict_proba(X_test)[:,1])}")
+    # rf_plus_clf = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf_clf),n_jobs = n_jobs)
+    # rf_plus_clf.fit(X_train, y_train)
+    # pprint.pprint(f"RF+ roc_auc_score: {roc_auc_score(y_test,rf_plus_clf.predict_proba(X_test)[:,1])}")
+
+    # #test get classification shap scores
+    # shap_values = rf_plus_clf.get_kernel_shap_scores(X_train, X_test)
+    # pprint.pprint(shap_values.shape)
+    # #test get classification LIME scores
+    # lime_values = rf_plus_clf.get_lime_scores(X_train, X_test)
+    # pprint.pprint(lime_values.shape)
+
+    
+
+
+    #pprint.pprint(shap_values.shape)
+   
+
     #test get local scores
-    lfi = print(type(rf_plus.estimators_[0]))
-    #get_local_mdi_plus(X_test, y_test, train_or_test="test")
-
-
- 
-    # def get_shap_scores(self, trainX: np.ndarray, testX: np.ndarray, max_samples: float = 1000):
-    #     """
-    #     Obtain SHAP feature importances.
-
-    #     Inputs:
-    #         trainX (np.ndarray): The training covariate matrix. This is
-    #                              necessary to fit the SHAP model.
-    #         testX (np.ndarray): The testing covariate matrix. This is the data
-    #                             the resulting SHAP values will be based on.
-    #         max_samples (float): The maximum number of samples to use from the
-    #                              passed background data.
-    #     """
-        
-    #     background = shap.maskers.Independent(trainX, max_samples=max_samples)
-    #     explainer = shap.Explainer(self.predict, background)
-    #     shap_values = explainer(testX)
-    #     return shap_values.values
-
-
+    
 
 
 

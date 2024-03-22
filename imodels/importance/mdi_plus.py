@@ -76,10 +76,7 @@ class ForestMDIPlus:
         self.scoring_fns = scoring_fns
         self.local_scoring_fns = local_scoring_fns
         self.choose_reg_param = choose_reg_param    
-        #self.sample_split = sample_split
         self.tree_random_states = tree_random_states
-        #if self.sample_split in ["oob", "inbag"] and not self.tree_random_states:
-        #    raise ValueError("Must specify tree_random_states to use 'oob' or 'inbag' sample_split.")
         self.mode = mode
         self.task = task
         self.center = center
