@@ -6,7 +6,7 @@ from collections import defaultdict
 from sklearn.ensemble import BaseEnsemble
 from sklearn.ensemble._forest import _generate_unsampled_indices, _generate_sample_indices
 
-from .local_stumps import make_stumps, tree_feature_transform
+from imodels.tree.local_stumps import make_stumps, tree_feature_transform
 
 
 class BlockPartitionedData:
