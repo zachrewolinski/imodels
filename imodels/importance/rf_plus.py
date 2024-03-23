@@ -8,11 +8,10 @@ from sklearn.utils.validation import check_is_fitted
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import train_test_split
-from joblib import Parallel, delayed
 from imodels.importance.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
 from imodels.importance.ppms import RidgeRegressorPPM, LogisticClassifierPPM, GlmClassifierPPM, GlmRegressorPPM
 from imodels.importance.mdi_plus import ForestMDIPlus, _get_sample_split_data
-from imodels.importance.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_data
+from imodels.importance.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy
 from imodels.importance.ppms_base import *
 from sklearn.metrics import r2_score, roc_auc_score
 from sklearn.datasets import load_breast_cancer, load_diabetes
@@ -57,13 +56,14 @@ class _RandomForestPlus(BaseEstimator):
     def __init__(self, rf_model=None, prediction_model=None,
                  include_raw=True, drop_features=True, add_transformers=None, 
                  center=True, normalize=False, cv_ridge = None, n_jobs = -1, 
-                fit_on = "auto",choose_reg_param = "loo"):
+                fit_on = "auto",choose_reg_param = "loo",multi_task = True):
         
         assert fit_on in ["inbag","oob","all","auto"]
         assert multi_class in ["auto","ovr","multinomial"], "multi_class must be either 'auto', 'ovr', or 'multinomial'"
         assert (choose_reg_param == "loo") or (isinstance(choose_reg_param, int) and choose_reg_param >= 0), "choose_reg_param must be either 'loo' or a non-negative integer"
         # Rest of the function code
         super().__init__()
+        
         if isinstance(self, RegressorMixin):
             self._task = "regression"
         elif isinstance(self, ClassifierMixin):
@@ -99,7 +99,12 @@ class _RandomForestPlus(BaseEstimator):
         self.choose_reg_param = choose_reg_param
         self.n_jobs = n_jobs
         self._is_ppm = isinstance(prediction_model, PartialPredictionModelBase)
-        
+
+        if hasattr(self.prediction_model, 'multi_task'):
+            multi_task = False
+        else:
+            multi_task = multi_task
+        self.multi_task = multi_task
     
         self.transformers_ = []
         self.estimators_ = []
@@ -129,26 +134,28 @@ class _RandomForestPlus(BaseEstimator):
         
         self._n_samples_train = X.shape[0]
 
-        X_array, y = _check_data(X, y)
+        X_array, y = _check_Xy(X, y)
         
         # center data before fitting random forest
         if center:
-            X = X - X.mean(axis=0)
+            X_array = X_array - X_array.mean(axis=0)
 
         # fit random forest
-        n_samples = X.shape[0]
+        n_samples = X_array.shape[0]
         
         # check if self.rf_model has already been fit
         if not hasattr(self.rf_model, "estimators_"):
-            self.rf_model.fit(X, y, sample_weight=sample_weight)
+            self.rf_model.fit(X_array, y, sample_weight=sample_weight)
         
         # onehot encode multiclass response for GlmClassiferPPM
-        if isinstance(self.prediction_model, GlmClassifierPPM):
-            self._multi_class = False
-            if len(np.unique(y)) > 2:
-                self._multi_class = True
-                self._y_encoder = OneHotEncoder()
-                y = self._y_encoder.fit_transform(y.reshape(-1, 1)).toarray()
+        # if isinstance(self.prediction_model, GlmClassifierPPM):
+        #     self._multi_class = False
+        #     if len(np.unique(y)) > 2:
+        #         self._multi_class = True
+        #         self._y_encoder = OneHotEncoder()
+        #         y = self._y_encoder.fit_transform(y.reshape(-1, 1)).toarray()
+        
+        
         # fit model for each tree
         
         
@@ -240,16 +247,8 @@ class _RandomForestPlus(BaseEstimator):
         """
         X = check_array(X)
         check_is_fitted(self, "estimators_")
-        if isinstance(X, pd.DataFrame):
-            if self.feature_names_ is not None:
-                X_array = X.loc[:, self.feature_names_].values
-            else:
-                X_array = X.values
-        elif isinstance(X, np.ndarray):
-            X_array = X
-        else:
-            raise ValueError("Input X must be a pandas DataFrame or numpy array.")
-        
+        X_array = _check_X(X)
+
         def parallel_predict_helper(estimator, transformer, data):
             blocked_data = transformer.transform(data, center=self.center, normalize=self.normalize)
             predictions = estimator.predict(blocked_data.get_all_data())
