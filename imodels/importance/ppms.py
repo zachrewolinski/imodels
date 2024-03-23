@@ -222,7 +222,6 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         return loo_coef_.T
 
     def _get_aloocv_alpha(self, X, y):
-        # print("IN '_get_aloocv_alpha' method of _GlmPPM")
         cv_scores = np.zeros_like(self.alpha_grid)
         for i, alpha in enumerate(self.alpha_grid):
             loo_coef_ = self._fit_loo_coefficients(X, y, alpha)

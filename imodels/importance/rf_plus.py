@@ -8,7 +8,7 @@ from sklearn.utils.validation import check_is_fitted
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import train_test_split
-from imodels.importance.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
+from imodels.importance.data_transformers.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
 from imodels.importance.ppms import RidgeRegressorPPM, LogisticClassifierPPM, GlmClassifierPPM, GlmRegressorPPM
 from imodels.importance.mdi_plus import ForestMDIPlus, _get_sample_split_data
 from imodels.importance.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy
@@ -59,7 +59,7 @@ class _RandomForestPlus(BaseEstimator):
                 fit_on = "auto",choose_reg_param = "loo",multi_task = True):
         
         assert fit_on in ["inbag","oob","all","auto"]
-        assert multi_class in ["auto","ovr","multinomial"], "multi_class must be either 'auto', 'ovr', or 'multinomial'"
+        #assert multi_class in ["auto","ovr","multinomial"], "multi_class must be either 'auto', 'ovr', or 'multinomial'"
         assert (choose_reg_param == "loo") or (isinstance(choose_reg_param, int) and choose_reg_param >= 0), "choose_reg_param must be either 'loo' or a non-negative integer"
         # Rest of the function code
         super().__init__()
@@ -594,11 +594,7 @@ class RandomForestPlusRegressor(_RandomForestPlus, RegressorMixin):
     be used as a prediction model or interpreted via generalized
     mean decrease in impurity (MDI+). For more details, refer to [paper].
     """
-    def __init__(self, rf_model=None, prediction_model=None, include_raw=True, drop_features=True, 
-                 add_transformers=None, center=True, normalize=False, cv_ridge=None, n_jobs=-1,
-                 fit_on="auto", choose_reg_param="loo",multi_task = "auto"):
-        super().__init__(rf_model, prediction_model, include_raw, drop_features, add_transformers, center, normalize, cv_ridge, n_jobs, fit_on, choose_reg_param, )
-
+    ...
 
 class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
     """
