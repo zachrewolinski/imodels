@@ -94,6 +94,7 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
             self.loo_coefficients_ = None
         self.coefficients_ = {}
         self._intercept_pred = None
+        self.cv_ridge = None
 
     def _fit_model(self, X, y):
         y_train = copy.deepcopy(y)
@@ -293,12 +294,9 @@ class _RidgePPM(_GlmPPM, PartialPredictionModelBase, ABC):
 
     def __init__(self, loo=True, alpha_grid=np.logspace(-5, 5, 100),
                  gcv_mode='auto', cv_ridge=None, **kwargs):
-        # print("CREATING _RidgePPM OBJECT")
-        super().__init__(Ridge(**kwargs), loo, alpha_grid, gcv_mode=gcv_mode,
-                         cv_ridge = cv_ridge)
+        super().__init__(Ridge(**kwargs), loo, alpha_grid, gcv_mode=gcv_mode)
 
     def set_alphas(self, alphas="default", blocked_data=None, y=None):
-        # print("IN 'set_alphas' method of _RidgePPM")
         full_data = blocked_data.get_all_data()
         if alphas == "default":
             alphas = get_alpha_grid(full_data, y)

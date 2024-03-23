@@ -667,40 +667,43 @@ def _partial_preds_to_scores(partial_preds, y_test, scoring_fn, local_scoring_fn
     else:
         return np.vstack(scores)
 
-def _get_default_sample_split(sample_split, prediction_model, is_ppm):
-    # print("IN '_get_default_sample_split' METHOD WITHIN THE TREE MDI PLUS OBJECT")
-    if sample_split == "auto":
-        sample_split = "oob"
-        if is_ppm:
-            if prediction_model.loo:
-                sample_split = "loo"
-    return sample_split
-
-
-def _validate_sample_split(sample_split, prediction_model, is_ppm):
-    # print("IN '_validate_sample_split' METHOD WITHIN THE TREE MDI PLUS OBJECT")
-    if sample_split in ["oob", "inbag"] and is_ppm:
-        if prediction_model.loo:
-            raise ValueError("Cannot use LOO together with OOB or in-bag sample splitting.")
 
 def _get_sample_split_data(blocked_data, y, random_state):
     in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, in_bag_indices, oob_indices = _blocked_train_test_split(blocked_data,y,random_state)
     return in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, in_bag_indices,oob_indices
 
-'''
-def _get_sample_split_data(blocked_data, y, random_state, sample_split):
-    # print("IN '_get_sample_split_data' METHOD WITHIN THE TREE MDI PLUS OBJECT")
-    if sample_split == "oob":
-        train_blocked_data, test_blocked_data, y_train, y_test, _, test_indices = \
-            _blocked_train_test_split(blocked_data, y, random_state)
-    elif sample_split == "inbag":
-        train_blocked_data, _, y_train, _, test_indices, _ = \
-            _blocked_train_test_split(blocked_data, y, random_state)
-        test_blocked_data = train_blocked_data
-        y_test = y_train
-    else:
-        train_blocked_data = test_blocked_data = blocked_data
-        y_train = y_test = y
-        test_indices = np.arange(y.shape[0])
-    return train_blocked_data, test_blocked_data, y_train, y_test, test_indices
-'''
+
+
+
+# def _get_default_sample_split(sample_split, prediction_model, is_ppm):
+#     # print("IN '_get_default_sample_split' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+#     if sample_split == "auto":
+#         sample_split = "oob"
+#         if is_ppm:
+#             if prediction_model.loo:
+#                 sample_split = "loo"
+#     return sample_split
+
+
+
+# def _validate_sample_split(sample_split, prediction_model, is_ppm):
+#     # print("IN '_validate_sample_split' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+#     if sample_split in ["oob", "inbag"] and is_ppm:
+#         if prediction_model.loo:
+#             raise ValueError("Cannot use LOO together with OOB or in-bag sample splitting.")
+
+# def _get_sample_split_data(blocked_data, y, random_state, sample_split):
+#     # print("IN '_get_sample_split_data' METHOD WITHIN THE TREE MDI PLUS OBJECT")
+#     if sample_split == "oob":
+#         train_blocked_data, test_blocked_data, y_train, y_test, _, test_indices = \
+#             _blocked_train_test_split(blocked_data, y, random_state)
+#     elif sample_split == "inbag":
+#         train_blocked_data, _, y_train, _, test_indices, _ = \
+#             _blocked_train_test_split(blocked_data, y, random_state)
+#         test_blocked_data = train_blocked_data
+#         y_test = y_train
+#     else:
+#         train_blocked_data = test_blocked_data = blocked_data
+#         y_train = y_test = y
+#         test_indices = np.arange(y.shape[0])
+#     return train_blocked_data, test_blocked_data, y_train, y_test, test_indices

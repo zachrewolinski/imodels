@@ -157,6 +157,30 @@ def _get_lime_scores_rf_plus(model_pred_func, task, X_train,X_test,random_state)
 
         return lime_values
 
+def _check_Xy(X,y):
+    if isinstance(X, pd.DataFrame):
+        self.feature_names_ = list(X.columns)
+        X_array = X.values
+    elif isinstance(X, np.ndarray):
+        X_array = X
+    else:
+        raise ValueError("Input X must be a pandas DataFrame or numpy array.")
+    if isinstance(y, pd.DataFrame):
+        y = y.values.ravel()
+    elif not isinstance(y, np.ndarray):
+        raise ValueError("Input y must be a pandas DataFrame or numpy array.")
+    return X_array, y
+
+def _check_X(X):
+    if isinstance(X, pd.DataFrame):
+        self.feature_names_ = list(X.columns)
+        X_array = X.values
+    elif isinstance(X, np.ndarray):
+        X_array = X
+    else:
+        raise ValueError("Input X must be a pandas DataFrame or numpy array.")
+    return X_array
+
  #def parallel_explainer(ex, row_to_explain):
     #    return ex.shap_values(row_to_explain,silent=True)
     #shap_values = Parallel(n_jobs=n_jobs)(delayed(parallel_explainer)(ex, X_test[i,:]) for i in range(len(X_test)))

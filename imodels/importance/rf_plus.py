@@ -1,27 +1,21 @@
-import copy
 import numpy as np
 import pandas as pd
-import shap
-import lime
-import pprint
+import copy, pprint
 from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
-from sklearn.metrics import r2_score, roc_auc_score, log_loss, mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import train_test_split
-from tqdm import tqdm
 from joblib import Parallel, delayed
-import multiprocessing
-from sklearn.datasets import load_diabetes, load_breast_cancer
 from imodels.importance.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
-from imodels.importance.ppms import RidgeRegressorPPM, LogisticClassifierPPM
-from imodels.importance.mdi_plus import ForestMDIPlus, _get_default_sample_split, _validate_sample_split, _get_sample_split_data
-from functools import reduce
-from imodels.importance.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus
+from imodels.importance.ppms import RidgeRegressorPPM, LogisticClassifierPPM, GlmClassifierPPM, GlmRegressorPPM
+from imodels.importance.mdi_plus import ForestMDIPlus, _get_sample_split_data
+from imodels.importance.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_data
 from imodels.importance.ppms_base import *
+from sklearn.metrics import r2_score, roc_auc_score
+from sklearn.datasets import load_breast_cancer, load_diabetes
 
 class _RandomForestPlus(BaseEstimator):
     """
@@ -61,12 +55,12 @@ class _RandomForestPlus(BaseEstimator):
     """
 
     def __init__(self, rf_model=None, prediction_model=None,
-                 include_raw=True, drop_features=True, add_transformers=None,
+                 include_raw=True, drop_features=True, add_transformers=None, 
                  center=True, normalize=False, cv_ridge = None, n_jobs = -1, 
                 fit_on = "auto",choose_reg_param = "loo"):
-        #assert sample_split in ["loo", "oob", "inbag", "auto", None]
-        #assert fit_on in ["train", "test"]
+        
         assert fit_on in ["inbag","oob","all","auto"]
+        assert multi_class in ["auto","ovr","multinomial"], "multi_class must be either 'auto', 'ovr', or 'multinomial'"
         assert (choose_reg_param == "loo") or (isinstance(choose_reg_param, int) and choose_reg_param >= 0), "choose_reg_param must be either 'loo' or a non-negative integer"
         # Rest of the function code
         super().__init__()
@@ -86,6 +80,8 @@ class _RandomForestPlus(BaseEstimator):
                 prediction_model = RidgeRegressorPPM(loo=choose_reg_param)
             elif self._task == "classification":
                 prediction_model = LogisticClassifierPPM(loo=choose_reg_param)
+        
+        
         self.rf_model = rf_model
         self.random_state = rf_model.random_state
         self.prediction_model = prediction_model
@@ -94,6 +90,8 @@ class _RandomForestPlus(BaseEstimator):
         self.add_transformers = add_transformers
         self.center = center
         self.normalize = normalize
+        
+       
         if fit_on == "auto":
             self.fit_on = "all"
         else:
@@ -102,8 +100,14 @@ class _RandomForestPlus(BaseEstimator):
         self.n_jobs = n_jobs
         self._is_ppm = isinstance(prediction_model, PartialPredictionModelBase)
         
-        #self.sample_split = _get_default_sample_split(sample_split, prediction_model, self._is_ppm)
-        #_validate_sample_split(self.sample_split, prediction_model, self._is_ppm)
+    
+        self.transformers_ = []
+        self.estimators_ = []
+        self._tree_random_states = []
+        self.prediction_score_ = None
+        self.mdi_plus_ = None
+        self.mdi_plus_scores_ = None
+        self.feature_names_ = None
 
     def fit(self, X, y, center=True, sample_weight=None, **kwargs):
         """
@@ -122,26 +126,10 @@ class _RandomForestPlus(BaseEstimator):
             Additional arguments to pass to self.prediction_model.fit()
 
         """
-        self.transformers_ = []
-        self.estimators_ = []
-        self._tree_random_states = []
-        self.prediction_score_ = None
-        self.mdi_plus_ = None
-        self.mdi_plus_scores_ = None
-        self.feature_names_ = None
+        
         self._n_samples_train = X.shape[0]
 
-        if isinstance(X, pd.DataFrame):
-            self.feature_names_ = list(X.columns)
-            X_array = X.values
-        elif isinstance(X, np.ndarray):
-            X_array = X
-        else:
-            raise ValueError("Input X must be a pandas DataFrame or numpy array.")
-        if isinstance(y, pd.DataFrame):
-            y = y.values.ravel()
-        elif not isinstance(y, np.ndarray):
-            raise ValueError("Input y must be a pandas DataFrame or numpy array.")
+        X_array, y = _check_data(X, y)
         
         # center data before fitting random forest
         if center:
@@ -153,6 +141,7 @@ class _RandomForestPlus(BaseEstimator):
         # check if self.rf_model has already been fit
         if not hasattr(self.rf_model, "estimators_"):
             self.rf_model.fit(X, y, sample_weight=sample_weight)
+        
         # onehot encode multiclass response for GlmClassiferPPM
         if isinstance(self.prediction_model, GlmClassifierPPM):
             self._multi_class = False
@@ -161,6 +150,8 @@ class _RandomForestPlus(BaseEstimator):
                 self._y_encoder = OneHotEncoder()
                 y = self._y_encoder.fit_transform(y.reshape(-1, 1)).toarray()
         # fit model for each tree
+        
+        
         all_full_preds = []
 
         #fit GLM on each tree
@@ -604,7 +595,10 @@ class RandomForestPlusRegressor(_RandomForestPlus, RegressorMixin):
     be used as a prediction model or interpreted via generalized
     mean decrease in impurity (MDI+). For more details, refer to [paper].
     """
-    ...
+    def __init__(self, rf_model=None, prediction_model=None, include_raw=True, drop_features=True, 
+                 add_transformers=None, center=True, normalize=False, cv_ridge=None, n_jobs=-1,
+                 fit_on="auto", choose_reg_param="loo",multi_task = "auto"):
+        super().__init__(rf_model, prediction_model, include_raw, drop_features, add_transformers, center, normalize, cv_ridge, n_jobs, fit_on, choose_reg_param, )
 
 
 class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
@@ -620,8 +614,11 @@ class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
 
 if __name__ == "__main__":
 
+
     test_size = 0.2
     n_jobs = 1
+    
+    
     #test regression
     X, y = load_diabetes(return_X_y=True)
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=1,)
@@ -635,6 +632,8 @@ if __name__ == "__main__":
     rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf),n_jobs = n_jobs)
     rf_plus.fit(X_train, y_train)
     pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
+
+
 
     #test get regression shap scores
     #shap_values = rf_plus.get_kernel_shap_scores(X_train, X_test) 
