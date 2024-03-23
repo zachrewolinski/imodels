@@ -12,8 +12,8 @@ from sklearn.metrics import log_loss, mean_squared_error
 from scipy.special import softmax
 
 
-from imodels.importance.ppms_base import PartialPredictionModelBase, _GenericPPM, GenericRegressorPPM, GenericClassifierPPM
-from imodels.importance.ppms_util import *
+from imodels.tree.rf_plus.ppms.ppms_base import PartialPredictionModelBase, _GenericPPM, GenericRegressorPPM, GenericClassifierPPM
+from imodels.tree.rf_plus.ppms.ppms_util import *
 
 
 class _GlmPPM(PartialPredictionModelBase, ABC):

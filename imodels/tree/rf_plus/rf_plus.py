@@ -8,11 +8,11 @@ from sklearn.utils.validation import check_is_fitted
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import train_test_split
-from imodels.importance.data_transformers.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
-from imodels.importance.ppms import RidgeRegressorPPM, LogisticClassifierPPM, GlmClassifierPPM, GlmRegressorPPM
+from imodels.tree.rf_plus.data_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
+from imodels.tree.rf_plus.ppms import RidgeRegressorPPM, LogisticClassifierPPM, GlmClassifierPPM, GlmRegressorPPM
+from imodels.tree.rf_plus.ppms.ppms_base import *
 from imodels.importance.mdi_plus import ForestMDIPlus, _get_sample_split_data
-from imodels.importance.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy
-from imodels.importance.ppms_base import *
+from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy
 from sklearn.metrics import r2_score, roc_auc_score
 from sklearn.datasets import load_breast_cancer, load_diabetes
 
