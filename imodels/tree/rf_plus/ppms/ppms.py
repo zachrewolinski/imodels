@@ -13,7 +13,7 @@ from scipy.special import softmax
 
 
 from imodels.tree.rf_plus.ppms.ppms_base import PartialPredictionModelBase, _GenericPPM, GenericRegressorPPM, GenericClassifierPPM
-from imodels.tree.rf_plus.ppms.ppms_util import *
+from imodels.tree.rf_plus.ppms.ppms_util import _extract_coef_and_intercept, _set_alpha, _get_preds, _trim_values, get_alpha_grid
 
 
 class _GlmPPM(PartialPredictionModelBase, ABC):

@@ -3,9 +3,10 @@ import pandas as pd
 from scipy.spatial.distance import pdist
 from functools import partial
 
-from imodels.tree.rf_plus.ppms.ppms_base import PartialPredictionModelBase, GenericRegressorPPM, GenericClassifierPPM, _GlmPPM
+from imodels.tree.rf_plus.ppms.ppms_base import PartialPredictionModelBase, GenericRegressorPPM, GenericClassifierPPM
+from imodels.tree.rf_plus.ppms.ppms import _GlmPPM
 from imodels.tree.rf_plus.data_transformers.block_transformers import _blocked_train_test_split
-from imodels.tree.rf_plus.mdi_plus import tauAP_b, rbo
+from imodels.tree.rf_plus.mdi_plus.ranking_stability import tauAP_b, rbo
 
 
 class ForestMDIPlus:
