@@ -2,9 +2,8 @@
 Feature importance methods for black box models
 """
 
-
-
-# from .rf_plus import RandomForestPlusRegressor, RandomForestPlusClassifier
+from .rf_plus import RandomForestPlusRegressor, RandomForestPlusClassifier
+#from 
 # from .mdi_plus import ForestMDIPlus, TreeMDIPlus
 # from .ppms import GenericRegressorPPM, GenericClassifierPPM, \
 #     GlmRegressorPPM, GlmClassifierPPM, RidgeRegressorPPM, RidgeClassifierPPM, \

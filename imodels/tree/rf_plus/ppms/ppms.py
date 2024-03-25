@@ -10,7 +10,7 @@ import pandas as pd
 from sklearn.linear_model import RidgeCV, Ridge, LogisticRegression, HuberRegressor, Lasso
 from sklearn.metrics import log_loss, mean_squared_error
 from scipy.special import softmax
-
+from scipy import sparse
 
 from imodels.tree.rf_plus.ppms.ppms_base import PartialPredictionModelBase, _GenericPPM, GenericRegressorPPM, GenericClassifierPPM
 from imodels.tree.rf_plus.ppms.ppms_util import _extract_coef_and_intercept, _set_alpha, _get_preds, _trim_values, get_alpha_grid
@@ -103,12 +103,10 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
                 self.alpha_[j] = self._get_aloocv_alpha(X, yj)
             # Fit the model on the training set and compute the coefficients
             if self.loo:
-                self.loo_coefficients_[j] = \
-                    self._fit_loo_coefficients(X, yj, self.alpha_[j])
+                self.loo_coefficients_[j] = self._fit_loo_coefficients(X, yj, self.alpha_[j])
                 self.coefficients_[j] = _extract_coef_and_intercept(self.estimator)
             else:
-                self.coefficients_[j] = \
-                    self._fit_coefficients(X, yj, self.alpha_[j])
+                self.coefficients_[j] = self._fit_coefficients(X, yj, self.alpha_[j])
 
     def predict(self, X):
         preds_list = []
@@ -185,6 +183,7 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
 
     def _fit_coefficients(self, X, y, alpha):
         _set_alpha(self.estimator, alpha)
+        #X = sparse.csr_matrix(X)
         self.estimator.fit(X, y)
         return _extract_coef_and_intercept(self.estimator)
 
@@ -303,14 +302,12 @@ class RidgeClassifierPPM(_RidgePPM, GlmClassifierPPM,
     """
 
     def predict_proba(self, X):
-        # print("IN 'predict_proba' method of RidgeClassifierPPM")
         probs = softmax(self.predict(X))
         if probs.ndim == 1:
             probs = np.stack([1 - probs, probs], axis=1)
         return probs
 
     def predict_proba_loo(self, X):
-        # print("IN 'predict_proba_loo' method of RidgeClassifierPPM")
         probs = softmax(self.predict_loo(X))
         if probs.ndim == 1:
             probs = np.stack([1 - probs, probs], axis=1)
@@ -336,7 +333,7 @@ class LogisticClassifierPPM(GlmClassifierPPM, PartialPredictionModelBase, ABC):
         Other Parameters are passed on to LogisticRegression().
     """
 
-    def __init__(self, loo=True, alpha_grid=np.logspace(-2, 3, 1), class_weight='balanced', solver='lbfgs',
+    def __init__(self, loo=True, alpha_grid=np.logspace(-2, 4, 20), class_weight=None, solver='lbfgs',
                  penalty='l2', max_iter=200, trim=1e-4, **kwargs):
         assert penalty in ['l2', 'l1']
         if penalty == 'l2':

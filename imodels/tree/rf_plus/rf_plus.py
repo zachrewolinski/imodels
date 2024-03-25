@@ -1,6 +1,6 @@
 import numpy as np
 import pandas as pd
-import copy, pprint
+import copy, pprint, imodels
 from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils import check_array
@@ -14,6 +14,8 @@ from imodels.tree.rf_plus.ppms.ppms_base import *
 from imodels.importance.mdi_plus import ForestMDIPlus, _get_sample_split_data
 from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy
 from sklearn.metrics import r2_score, roc_auc_score
+from scipy import sparse
+import time
 from sklearn.datasets import load_breast_cancer, load_diabetes
 
 class _RandomForestPlus(BaseEstimator):
@@ -194,6 +196,10 @@ class _RandomForestPlus(BaseEstimator):
                     full_preds_n[:] = np.nan
                     full_preds_n[oob_indices] = full_preds
                 else:
+                    #sparse_data = sparse.csr_matrix(blocked_data.get_all_data())
+                    #pprint.pprint(f"sparse data: {sparse_data}")
+                    #pprint.pprint(blocked_data.get_all_data())
+                    #pprint.pprint(f"fraction of zeros: {np.mean(blocked_data.get_all_data() == 0)}")
                     self.prediction_model.fit(blocked_data.get_all_data(), y, **kwargs)
                     full_preds = pred_func(blocked_data.get_all_data())
                     full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 else np.empty((n_samples, full_preds.shape[1]))
@@ -624,7 +630,7 @@ if __name__ == "__main__":
     rf.fit(X_train, y_train)
     pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
 
-    rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf),n_jobs = n_jobs)
+    rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf),n_jobs = n_jobs,center=False)
     rf_plus.fit(X_train, y_train)
     pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
 
@@ -636,15 +642,20 @@ if __name__ == "__main__":
     #lime_values = rf_plus.get_lime_scores(X_train, X_test)
 
     # #test classification
-    # X, y = load_breast_cancer(return_X_y=True)
-    # print(X_test.shape)
-    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=1)
-    # rf_clf = RandomForestClassifier(n_estimators=3,min_samples_leaf=1,max_features="sqrt",random_state=1)
-    # rf_clf.fit(X_train, y_train)
-    # pprint.pprint(f"RF roc_auc_score: {roc_auc_score(y_test,rf_clf.predict_proba(X_test)[:,1])}")
-    # rf_plus_clf = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf_clf),n_jobs = n_jobs)
-    # rf_plus_clf.fit(X_train, y_train)
-    # pprint.pprint(f"RF+ roc_auc_score: {roc_auc_score(y_test,rf_plus_clf.predict_proba(X_test)[:,1])}")
+    #X, y = load_breast_cancer(return_X_y=True)
+    X,y,feature_names= imodels.get_clean_dataset('enhancer', data_source='imodels')
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size, random_state=1)
+    rf_clf = RandomForestClassifier(n_estimators=3,min_samples_leaf=1,max_features="sqrt",random_state=1)
+    rf_clf.fit(X_train, y_train)
+    pprint.pprint(f"RF roc_auc_score: {roc_auc_score(y_test,rf_clf.predict_proba(X_test)[:,1])}")
+    rf_plus_clf = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf_clf),n_jobs = n_jobs)
+
+    start = time.time()
+    rf_plus_clf.fit(X_train, y_train)
+    end = time.time()
+    
+    pprint.pprint(f"Time: {end-start}")
+    pprint.pprint(f"RF+ roc_auc_score: {roc_auc_score(y_test,rf_plus_clf.predict_proba(X_test)[:,1])}")
 
     # #test get classification shap scores
     # shap_values = rf_plus_clf.get_kernel_shap_scores(X_train, X_test)
