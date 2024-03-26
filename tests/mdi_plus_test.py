@@ -12,10 +12,10 @@ from sklearn.metrics import r2_score, log_loss, roc_auc_score, \
 
 from imodels.importance.block_transformers import IdentityTransformer, \
     TreeTransformer, CompositeTransformer, MDIPlusDefaultTransformer
-from imodels.importance.ppms import RidgeRegressorPPM, \
+from imodels.tree.rf_plus.ppms.ppms import RidgeRegressorPPM, \
     LogisticClassifierPPM, RobustRegressorPPM
 from imodels.importance.mdi_plus import TreeMDIPlus, ForestMDIPlus
-from imodels.importance.rf_plus import RandomForestPlusClassifier
+from imodels.tree.rf_plus.rf_plus import RandomForestPlusClassifier
 
 
 class TestTransformers:

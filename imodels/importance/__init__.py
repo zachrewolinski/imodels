@@ -2,10 +2,10 @@
 Feature importance methods for black box models
 """
 
-from .rf_plus import RandomForestPlusRegressor, RandomForestPlusClassifier
+from ..tree.rf_plus.rf_plus import RandomForestPlusRegressor, RandomForestPlusClassifier
 from .mdi_plus import ForestMDIPlus, TreeMDIPlus
-from .ppms import GenericRegressorPPM, GenericClassifierPPM, \
+from ..tree.rf_plus.ppms.ppms import GenericRegressorPPM, GenericClassifierPPM, \
     GlmRegressorPPM, GlmClassifierPPM, RidgeRegressorPPM, RidgeClassifierPPM, \
     LogisticClassifierPPM, RobustRegressorPPM, LassoRegressorPPM
-from .block_transformers import IdentityTransformer, TreeTransformer, \
+from imodels.tree.rf_plus.data_transformations.block_transformers import IdentityTransformer, TreeTransformer, \
     CompositeTransformer, MDIPlusDefaultTransformer
