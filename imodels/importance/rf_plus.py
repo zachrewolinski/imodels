@@ -14,7 +14,7 @@ from sklearn.preprocessing import OneHotEncoder
 from tqdm import tqdm
 from joblib import Parallel, delayed
 import multiprocessing
-
+from sklearn.model_selection import train_test_split
 from imodels.importance.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, \
     CompositeTransformer, IdentityTransformer
 from imodels.importance.ppms import PartialPredictionModelBase, GlmClassifierPPM, \
@@ -22,6 +22,7 @@ from imodels.importance.ppms import PartialPredictionModelBase, GlmClassifierPPM
 from imodels.importance.mdi_plus import ForestMDIPlus, \
     _get_default_sample_split, _validate_sample_split, _get_sample_split_data
 from functools import reduce
+import imodels
 
 
 class _RandomForestPlus(BaseEstimator):
@@ -737,3 +738,18 @@ def _neg_log_loss(y_true, y_pred):
     Scalar quantity, measuring the negative log-loss value.
     """
     return -log_loss(y_true, y_pred)
+
+
+if __name__ == "__main__":
+    X, y,f = imodels.get_clean_dataset("abalone")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=1,)
+
+    pprint.pprint(f"Shape: {X_train.shape}")
+
+    rf = RandomForestRegressor(n_estimators=3,min_samples_leaf=5,max_features=0.33,random_state=1)
+    rf.fit(X_train, y_train)
+    pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
+
+    rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf))
+    rf_plus.fit(X_train, y_train)
+    pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
