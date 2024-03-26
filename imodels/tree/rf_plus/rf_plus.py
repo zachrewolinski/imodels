@@ -20,7 +20,7 @@ from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlus
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, GlmClassifierPPM, \
     RidgeRegressorPPM, LogisticClassifierPPM
 from imodels.tree.rf_plus.mdi_plus import ForestMDIPlus, _get_default_sample_split, _validate_sample_split, _get_sample_split_data
-from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss
+from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus
 from functools import reduce
 import imodels
 
@@ -316,74 +316,14 @@ class _RandomForestPlus(BaseEstimator):
             k (int): The number of clusters to use for the shap.kmeans algorithm
         """
         
-        # check that p is a valid proportion
-        assert 0 < p <= 1, "p must be in the interval (0, 1]"
-        
-        # get the subset of the training data to use
-        np.random.seed(1)
-        
-        # for faster computation, we may want to use shap.kmeans
-        if use_summary:
-            
-            # obtain summary of the training data
-            X_train_summary = shap.kmeans(X_train, k)
-            
-            # choose predict function depending on the task
-            if self._task == "regression":
-                ex = shap.KernelExplainer(self.predict, X_train_summary)
-            elif self._task == "classification":
-                ex = shap.KernelExplainer(self.predict_proba, X_train_summary)
-            else:
-                raise ValueError("Unknown task.")
-            
-            # get shap values from the KernelExplainer
-            shap_values = ex.shap_values(X_test)       
-            if self._task == "classification":
-                def add_abs(a, b):
-                    return abs(a) + abs(b)
-                shap_values = reduce(add_abs, shap_values)
-            else:
-                shap_values = abs(shap_values)
+        if self._task == "regression": 
+            model_pred_func = self.predict 
+        else: 
+            model_pred_func = self.predict_proba
+        return _get_kernel_shap_rf_plus(model_pred_func,self._task,X_train,X_test,p,use_summary,k, self.random_state)
 
-        # if we have the time for extra computation, we can use the standard way
-        else:
-
-            # obtain subset of X_train
-            X_train_subset = shap.utils.sample(X_train,
-                                               int(p * X_train.shape[0]))
-        
-            # fit the KernelSHAP model
-            ex = shap.KernelExplainer(self.predict, X_train_subset)
-        
-            # get the SHAP values
-            shap_values = ex.shap_values(X_test)
-            if self._task == "classification":
-                def add_abs(a, b):
-                    return abs(a) + abs(b)
-                shap_values = reduce(add_abs, shap_values)
-            else:
-                shap_values = abs(shap_values)
-                
-        return shap_values
     
-    # def get_shap_scores(self, trainX: np.ndarray, testX: np.ndarray, max_samples: float = 1000):
-    #     """
-    #     Obtain SHAP feature importances.
 
-    #     Inputs:
-    #         trainX (np.ndarray): The training covariate matrix. This is
-    #                              necessary to fit the SHAP model.
-    #         testX (np.ndarray): The testing covariate matrix. This is the data
-    #                             the resulting SHAP values will be based on.
-    #         max_samples (float): The maximum number of samples to use from the
-    #                              passed background data.
-    #     """
-        
-    #     background = shap.maskers.Independent(trainX, max_samples=max_samples)
-    #     explainer = shap.Explainer(self.predict, background)
-    #     shap_values = explainer(testX)
-    #     return shap_values.values
-    
     def get_lime_scores(self, X_train: np.ndarray,
                         X_test: np.ndarray) -> np.ndarray:
         """
@@ -397,39 +337,14 @@ class _RandomForestPlus(BaseEstimator):
             num_samples (int): The number of samples to use when fitting the
                                LIME model.
         """
-        
-        # set seed for reproducibility
-        np.random.seed(1)
-        
-        # get shape of X_test
-        num_samples, num_features = X_test.shape
-        
-        # create data structure to save scores in
-        result = np.zeros((num_samples, num_features))
-        
-        # initialize the LIME explainer
-        explainer = lime.lime_tabular.LimeTabularExplainer(X_train,
-                                                           verbose=False,
-                                                           mode=self._task)
-        if self._task == "regression":
-            predict_fn = self.predict
-        elif self._task == "classification":
-            predict_fn = self.predict_proba
+        if self._task == "regression": 
+            model_pred_func = self.predict
         else:
-            raise ValueError("Unknown task.")
-        for i in range(num_samples):
-            exp = explainer.explain_instance(X_test[i,:], predict_fn,
-                                             num_features=num_features)
-            original_feature_importance = exp.as_map()[1]
-            sorted_feature_importance = sorted(original_feature_importance,
-                                               key = lambda x: x[0])
-            for j in range(num_features):
-                result[i,j] = abs(sorted_feature_importance[j][1])
-        # Convert the array to a DataFrame
-        lime_values = pd.DataFrame(result, columns=[f'Feature_{i}' for \
-                                       i in range(num_features)])
-
-        return lime_values
+            model_pred_func = self.predict_proba
+        return _get_lime_scores_rf_plus(model_pred_func,self._task,X_train,X_test,self.random_state)
+    
+        
+        
 
     def get_mdi_plus_scores(self, X=None, y=None,
                             scoring_fns="auto", local_scoring_fns=False,
@@ -664,6 +579,59 @@ if __name__ == "__main__":
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+     # def get_shap_scores(self, trainX: np.ndarray, testX: np.ndarray, max_samples: float = 1000):
+    #     """
+    #     Obtain SHAP feature importances.
+
+    #     Inputs:
+    #         trainX (np.ndarray): The training covariate matrix. This is
+    #                              necessary to fit the SHAP model.
+    #         testX (np.ndarray): The testing covariate matrix. This is the data
+    #                             the resulting SHAP values will be based on.
+    #         max_samples (float): The maximum number of samples to use from the
+    #                              passed background data.
+    #     """
+        
+    #     background = shap.maskers.Independent(trainX, max_samples=max_samples)
+    #     explainer = shap.Explainer(self.predict, background)
+    #     shap_values = explainer(testX)
+    #     return shap_values.values
+    
 
 
 
