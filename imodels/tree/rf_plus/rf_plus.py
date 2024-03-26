@@ -20,7 +20,7 @@ from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlus
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, GlmClassifierPPM, \
     RidgeRegressorPPM, LogisticClassifierPPM
 from imodels.tree.rf_plus.mdi_plus import ForestMDIPlus, _get_default_sample_split, _validate_sample_split, _get_sample_split_data
-from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus
+from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy
 from functools import reduce
 import imodels
 
@@ -234,15 +234,7 @@ class _RandomForestPlus(BaseEstimator):
         """
         X = check_array(X)
         check_is_fitted(self, "estimators_")
-        if isinstance(X, pd.DataFrame):
-            if self.feature_names_ is not None:
-                X_array = X.loc[:, self.feature_names_].values
-            else:
-                X_array = X.values
-        elif isinstance(X, np.ndarray):
-            X_array = X
-        else:
-            raise ValueError("Input X must be a pandas DataFrame or numpy array.")
+        X_array = _check_X(X)   
 
         if self._task == "regression":
             predictions = 0
@@ -279,15 +271,7 @@ class _RandomForestPlus(BaseEstimator):
             raise AttributeError("'{}' object has no attribute 'predict_proba'".format(
                 self.estimators_[0].__class__.__name__)
             )
-        if isinstance(X, pd.DataFrame):
-            if self.feature_names_ is not None:
-                X_array = X.loc[:, self.feature_names_].values
-            else:
-                X_array = X.values
-        elif isinstance(X, np.ndarray):
-            X_array = X
-        else:
-            raise ValueError("Input X must be a pandas DataFrame or numpy array.")
+        X_array = _check_X(X)
 
         predictions = 0
         for estimator, transformer in zip(self.estimators_, self.transformers_):

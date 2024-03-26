@@ -159,7 +159,7 @@ def _get_lime_scores_rf_plus(model_pred_func, task, X_train,X_test,random_state)
 
 def _check_Xy(X,y):
     if isinstance(X, pd.DataFrame):
-        self.feature_names_ = list(X.columns)
+        feature_names_ = list(X.columns)
         X_array = X.values
     elif isinstance(X, np.ndarray):
         X_array = X
@@ -173,7 +173,7 @@ def _check_Xy(X,y):
 
 def _check_X(X):
     if isinstance(X, pd.DataFrame):
-        self.feature_names_ = list(X.columns)
+        feature_names_ = list(X.columns)
         X_array = X.values
     elif isinstance(X, np.ndarray):
         X_array = X
