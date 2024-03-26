@@ -19,7 +19,7 @@ from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlus
     CompositeTransformer, IdentityTransformer
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, GlmClassifierPPM, \
     RidgeRegressorPPM, LogisticClassifierPPM
-from imodels.importance.mdi_plus import ForestMDIPlus, _get_default_sample_split, _validate_sample_split, _get_sample_split_data
+from imodels.tree.rf_plus.mdi_plus import ForestMDIPlus, _get_default_sample_split, _validate_sample_split, _get_sample_split_data
 from functools import reduce
 import imodels
 
