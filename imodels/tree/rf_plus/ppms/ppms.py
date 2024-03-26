@@ -7,11 +7,10 @@ import numpy as np
 import scipy as sp
 import pandas as pd
 
-from sklearn.linear_model import RidgeCV, Ridge, \
-    LogisticRegression, HuberRegressor, Lasso
+from sklearn.linear_model import RidgeCV, Ridge, LogisticRegression, HuberRegressor, Lasso
 from sklearn.metrics import log_loss, mean_squared_error
 from scipy.special import softmax
-
+from imodels.tree.rf_plus.ppms.ppms_util import _extract_coef_and_intercept, _set_alpha, _get_preds, _trim_values, huber_loss
 
 class PartialPredictionModelBase(ABC):
     """
@@ -43,7 +42,6 @@ class PartialPredictionModelBase(ABC):
         y: ndarray of shape (n_samples, n_targets)
             The observed responses.
         """
-        # print("IN 'fit' method of PartialPredictionModelBase")
         self._fit_model(X, y)
         self.is_fitted = True
 
@@ -142,23 +140,18 @@ class _GenericPPM(PartialPredictionModelBase, ABC):
     """
 
     def __init__(self, estimator):
-        # print("CREATING _GenericPPM OBJECT")
         super().__init__(estimator)
 
     def _fit_model(self, X, y):
-        # print("IN '_fit_model' method of _GenericPPM")
         self.estimator.fit(X, y)
 
     def predict(self, X):
-        # print("IN 'predict' method of _GenericPPM")
         return self.estimator.predict(X)
 
     def predict_full(self, blocked_data):
-        # print("IN 'predict_full' method of _GenericPPM")
         return self.predict(blocked_data.get_all_data())
 
     def predict_partial_k(self, blocked_data, k, mode):
-        # print("IN 'predict_partial_k' method of _GenericPPM")
         modified_data = blocked_data.get_modified_data(k, mode)
         return self.predict(modified_data)
 
@@ -176,11 +169,9 @@ class GenericClassifierPPM(_GenericPPM, PartialPredictionModelBase, ABC):
     """
 
     def predict_proba(self, X):
-        # print("IN 'predict_proba' method of GenericClassifierPPM")
         return self.estimator.predict_proba(X)
 
     def predict_partial_k(self, blocked_data, k, mode):
-        # print("IN 'predict_partial_k' method of GenericClassifierPPM")
         modified_data = blocked_data.get_modified_data(k, mode)
         return self.predict_proba(modified_data)
 
@@ -251,12 +242,6 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         self._intercept_pred = None
 
     def _fit_model(self, X, y):
-        # print("IN '_fit_model' method of _GlmPPM")
-        # print("X Shape: ", X.shape)
-        # print("X Zero Elements: ", np.count_nonzero(X == 0))
-        # print("X: ", pd.DataFrame(X))
-        # print("y Shape: ", y.shape)
-        # print("y: ", pd.Series(y))
         y_train = copy.deepcopy(y)
         if y_train.ndim == 1:
             y_train = y_train.reshape(-1, 1)
@@ -279,13 +264,11 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
                 self.loo_coefficients_[j] = \
                     self._fit_loo_coefficients(X, yj, self.alpha_[j])
                 self.coefficients_[j] = _extract_coef_and_intercept(self.estimator)
-                # print("CALCULATED LOO COEFFICIENTS")
             else:
                 self.coefficients_[j] = \
                     self._fit_coefficients(X, yj, self.alpha_[j])
 
     def predict(self, X):
-        # print("IN 'predict' method of _GlmPPM")
         preds_list = []
         for j in range(self._n_outputs):
             preds_j = _get_preds(X, self.coefficients_[j], self.inv_link_fn)
@@ -297,7 +280,6 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         return _trim_values(preds, self.trim)
 
     def predict_loo(self, X):
-        # print("IN 'predict_loo' method of _GlmPPM")
         preds_list = []
         for j in range(self._n_outputs):
             if self.loo:
@@ -312,11 +294,9 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         return _trim_values(preds, self.trim)
 
     def predict_full(self, blocked_data):
-        # print("IN 'predict_full' method of _GlmPPM")
         return self.predict_loo(blocked_data.get_all_data())
 
     def predict_partial_k(self, blocked_data, k, mode, zero_value=None):
-        # print("IN 'predict_partial_k' method of _GlmPPM")
         assert mode in ["keep_k", "keep_rest"]
         if mode == "keep_k":
             block_indices = blocked_data.get_block_indices(k)
@@ -324,7 +304,6 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         elif mode == "keep_rest":
             block_indices = blocked_data.get_all_except_block_indices(k)
             data_block = blocked_data.get_all_except_block(k)
-        # print("BLOCK SHAPE:", data_block.shape)
         if len(block_indices) == 0:  # If empty block
             return self.intercept_pred
         else:
@@ -373,7 +352,6 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         return _extract_coef_and_intercept(self.estimator)
 
     def _fit_loo_coefficients(self, X, y, alpha, max_h=1-1e-4):
-        # print("IN '_fit_loo_coefficients' method of _GlmPPM")
         """
         Get the coefficient (and intercept) for each LOO model. Since we fit
         one model for each sample, this gives an ndarray of shape (n_samples,
@@ -407,7 +385,6 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         return loo_coef_.T
 
     def _get_aloocv_alpha(self, X, y):
-        # print("IN '_get_aloocv_alpha' method of _GlmPPM")
         cv_scores = np.zeros_like(self.alpha_grid)
         for i, alpha in enumerate(self.alpha_grid):
             loo_coef_ = self._fit_loo_coefficients(X, y, alpha)
@@ -592,95 +569,3 @@ class LassoRegressorPPM(GlmRegressorPPM, PartialPredictionModelBase, ABC):
         # print("CREATING LassoRegressorPPM OBJECT")
         super().__init__(Lasso(**kwargs), loo, alpha_grid, r_doubledot=None)
 
-
-def _trim_values(values, trim=None):
-    # print("IN '_trim_values' method of LassoRegressorPPM")
-    if trim is not None:
-        assert 0 < trim < 0.5, "Limit must be between 0 and 0.5"
-        return np.clip(values, trim, 1 - trim)
-    else:
-        return values
-
-
-def _extract_coef_and_intercept(estimator):
-    """
-    Get the coefficient vector and intercept from a GLM estimator
-    """
-    # print("IN '_extract_coef_and_intercept' method of LassoRegressorPPM")
-    coef_ = estimator.coef_
-    intercept_ = estimator.intercept_
-    if coef_.ndim > 1:  # For classifer estimators
-        coef_ = coef_.ravel()
-        intercept_ = intercept_[0]
-    augmented_coef_ = np.append(coef_, intercept_)
-    return augmented_coef_
-
-
-def _set_alpha(estimator, alpha):
-    # print("IN '_set_alpha' method of LassoRegressorPPM")
-    if hasattr(estimator, "alpha"):
-        estimator.set_params(alpha=alpha)
-    elif hasattr(estimator, "C"):
-        estimator.set_params(C=1/alpha)
-    else:
-        warnings.warn("Estimator has no regularization parameter.")
-
-
-def _get_preds(data_block, coefs, inv_link_fn, intercept=None):
-    # print("IN '_get_preds' method of LassoRegressorPPM")
-    if coefs.ndim > 1: # LOO predictions
-        if coefs.shape[1] == (data_block.shape[1] + 1):
-            intercept = coefs[:, -1]
-            coefs = coefs[:, :-1]
-        lin_preds = np.sum(data_block * coefs, axis=1) + intercept
-    else:
-        if len(coefs) == (data_block.shape[1] + 1):
-            intercept = coefs[-1]
-            coefs = coefs[:-1]
-        lin_preds = data_block @ coefs + intercept
-    return inv_link_fn(lin_preds)
-
-
-def huber_loss(y, preds, epsilon=1.35):
-    """
-    Evaluates Huber loss function.
-
-    Parameters
-    ----------
-    y: array-like of shape (n,)
-        Vector of observed responses.
-    preds: array-like of shape (n,)
-        Vector of estimated/predicted responses.
-    epsilon: float
-        Threshold, determining transition between squared
-        and absolute loss in Huber loss function.
-
-    Returns
-    -------
-    Scalar value, quantifying the Huber loss. Lower loss
-    indicates better fit.
-
-    """
-    # print("IN 'huber_loss' method of LassoRegressorPPM")
-    total_loss = 0
-    for i in range(len(y)):
-        sample_absolute_error = np.abs(y[i] - preds[i])
-        if sample_absolute_error < epsilon:
-            total_loss += 0.5 * ((y[i] - preds[i]) ** 2)
-        else:
-            sample_robust_loss = epsilon * sample_absolute_error - 0.5 * \
-                                 epsilon ** 2
-            total_loss += sample_robust_loss
-    return total_loss / len(y)
-
-
-def get_alpha_grid(X, y, start=-5, stop=5, num=100):
-    # print("IN 'get_alpha_grid' method of LassoRegressorPPM")
-    X = X - X.mean(axis=0)
-    y = y - y.mean(axis=0)
-    sigma_sq_ = np.linalg.norm(y, axis=0) ** 2 / X.shape[0]
-    X_var_ = np.linalg.norm(X, axis=0) ** 2
-    alpha_opts_ = (X_var_[:, np.newaxis] / (X.T @ y)) ** 2 * sigma_sq_
-    base = np.max(alpha_opts_)
-    alphas = np.logspace(start, stop, num=num) * base
-    return alphas
