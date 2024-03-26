@@ -20,6 +20,7 @@ from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlus
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, GlmClassifierPPM, \
     RidgeRegressorPPM, LogisticClassifierPPM
 from imodels.tree.rf_plus.mdi_plus import ForestMDIPlus, _get_default_sample_split, _validate_sample_split, _get_sample_split_data
+from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss
 from functools import reduce
 import imodels
 
@@ -155,7 +156,7 @@ class _RandomForestPlus(BaseEstimator):
                 y = self._y_encoder.fit_transform(y.reshape(-1, 1)).toarray()
         # fit model for each tree
         all_full_preds = []
-        i = 0
+   
 
         def parallel_fit_helper(tree_model):
             if self.add_transformers is None:
@@ -196,49 +197,7 @@ class _RandomForestPlus(BaseEstimator):
             self._tree_random_states.append(result[2])
             all_full_preds.append(result[3])
         
-        '''
-        for tree_model in tqdm(self.rf_model.estimators_):
-            # get transformer
-            if self.add_transformers is None:
-                if self.include_raw:
-                    transformer = MDIPlusDefaultTransformer(tree_model, drop_features=self.drop_features)
-                else:
-                    transformer = TreeTransformer(tree_model)
-            else:
-                if self.include_raw:
-                    base_transformer_list = [TreeTransformer(tree_model), IdentityTransformer()]
-                else:
-                    base_transformer_list = [TreeTransformer(tree_model)]
-                transformer = CompositeTransformer(base_transformer_list + self.add_transformers,
-                                                   drop_features=self.drop_features)
-            # fit transformer
-            blocked_data = transformer.fit_transform(X_array, center=self.center, normalize=self.normalize)
-            # do sample split
-            train_blocked_data, test_blocked_data, y_train, y_test, test_indices = \
-                _get_sample_split_data(blocked_data, y, tree_model.random_state, self.sample_split)
-            # fit prediction model
-            if train_blocked_data.get_all_data().shape[1] != 0:  # if tree has >= 1 split
-                if self.fit_on == "train":
-                    #pprint.pp(f"Training on tree {i}")
-                    self.prediction_model.fit(train_blocked_data.get_all_data(), y_train, **kwargs)
-                else:
-                    self.prediction_model.fit(test_blocked_data.get_all_data(), y_test, **kwargs)
-                self.estimators_.append(copy.deepcopy(self.prediction_model))
-                self.transformers_.append(copy.deepcopy(transformer))
-                #self.estimators_.append(self.prediction_model)
-                #self.transformers_.append(transformer)
-                self._tree_random_states.append(tree_model.random_state)
-                
-
-                # get full predictions
-                pred_func = self._get_pred_func()
-                full_preds = pred_func(test_blocked_data.get_all_data())
-                full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 \
-                    else np.empty((n_samples, full_preds.shape[1]))
-                full_preds_n[:] = np.nan
-                full_preds_n[test_indices] = full_preds
-                all_full_preds.append(full_preds_n)
-        '''
+     
         # compute prediction accuracy on internal sample split
         full_preds = np.nanmean(all_full_preds, axis=0)
         if self._task == "regression":
@@ -286,14 +245,11 @@ class _RandomForestPlus(BaseEstimator):
             raise ValueError("Input X must be a pandas DataFrame or numpy array.")
 
         if self._task == "regression":
-            # predictions = Parallel(n_jobs=2)(delayed(self.par_helper)(self.estimators_[i], self.transformers_[i], X_array) for i in range(len(self.estimators_)))
-            # predictions = np.mean(predictions, axis=0)
             predictions = 0
             for estimator, transformer in zip(self.estimators_, self.transformers_):
                 blocked_data = transformer.transform(X_array, center=self.center, normalize=self.normalize)
                 predictions += estimator.predict(blocked_data.get_all_data())
             predictions = predictions / len(self.estimators_)
-            # print("PREDICTIONS ARE EQUIVALENT:", np.allclose(predictions, predictions1))
         elif self._task == "classification":
             prob_predictions = self.predict_proba(X_array)
             if prob_predictions.ndim == 1:
@@ -690,54 +646,6 @@ class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
     ...
 
 
-def _fast_r2_score(y_true, y_pred, multiclass=False):
-    """
-    Evaluates the r-squared value between the observed and estimated responses.
-    Equivalent to sklearn.metrics.r2_score but without the robust error
-    checking, thus leading to a much faster implementation (at the cost of
-    this error checking). For multi-class responses, returns the mean
-    r-squared value across each column in the response matrix.
-
-    Parameters
-    ----------
-    y_true: array-like of shape (n_samples, n_targets)
-        Observed responses.
-    y_pred: array-like of shape (n_samples, n_targets)
-        Predicted responses.
-    multiclass: bool
-        Whether or not the responses are multi-class.
-
-    Returns
-    -------
-    Scalar quantity, measuring the r-squared value.
-    """
-    numerator = ((y_true - y_pred) ** 2).sum(axis=0, dtype=np.float64)
-    denominator = ((y_true - np.mean(y_true, axis=0)) ** 2). \
-        sum(axis=0, dtype=np.float64)
-    if multiclass:
-        return np.mean(1 - numerator / denominator)
-    else:
-        return 1 - numerator / denominator
-
-
-def _neg_log_loss(y_true, y_pred):
-    """
-    Evaluates the negative log-loss between the observed and
-    predicted responses.
-
-    Parameters
-    ----------
-    y_true: array-like of shape (n_samples, n_targets)
-        Observed responses.
-    y_pred: array-like of shape (n_samples, n_targets)
-        Predicted probabilies.
-
-    Returns
-    -------
-    Scalar quantity, measuring the negative log-loss value.
-    """
-    return -log_loss(y_true, y_pred)
-
 
 if __name__ == "__main__":
     X, y,f = imodels.get_clean_dataset("abalone")
@@ -752,3 +660,53 @@ if __name__ == "__main__":
     rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf))
     rf_plus.fit(X_train, y_train)
     pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
+
+
+
+
+
+
+
+    #    '''
+    #     for tree_model in tqdm(self.rf_model.estimators_):
+    #         # get transformer
+    #         if self.add_transformers is None:
+    #             if self.include_raw:
+    #                 transformer = MDIPlusDefaultTransformer(tree_model, drop_features=self.drop_features)
+    #             else:
+    #                 transformer = TreeTransformer(tree_model)
+    #         else:
+    #             if self.include_raw:
+    #                 base_transformer_list = [TreeTransformer(tree_model), IdentityTransformer()]
+    #             else:
+    #                 base_transformer_list = [TreeTransformer(tree_model)]
+    #             transformer = CompositeTransformer(base_transformer_list + self.add_transformers,
+    #                                                drop_features=self.drop_features)
+    #         # fit transformer
+    #         blocked_data = transformer.fit_transform(X_array, center=self.center, normalize=self.normalize)
+    #         # do sample split
+    #         train_blocked_data, test_blocked_data, y_train, y_test, test_indices = \
+    #             _get_sample_split_data(blocked_data, y, tree_model.random_state, self.sample_split)
+    #         # fit prediction model
+    #         if train_blocked_data.get_all_data().shape[1] != 0:  # if tree has >= 1 split
+    #             if self.fit_on == "train":
+    #                 #pprint.pp(f"Training on tree {i}")
+    #                 self.prediction_model.fit(train_blocked_data.get_all_data(), y_train, **kwargs)
+    #             else:
+    #                 self.prediction_model.fit(test_blocked_data.get_all_data(), y_test, **kwargs)
+    #             self.estimators_.append(copy.deepcopy(self.prediction_model))
+    #             self.transformers_.append(copy.deepcopy(transformer))
+    #             #self.estimators_.append(self.prediction_model)
+    #             #self.transformers_.append(transformer)
+    #             self._tree_random_states.append(tree_model.random_state)
+                
+
+    #             # get full predictions
+    #             pred_func = self._get_pred_func()
+    #             full_preds = pred_func(test_blocked_data.get_all_data())
+    #             full_preds_n = np.empty(n_samples) if full_preds.ndim == 1 \
+    #                 else np.empty((n_samples, full_preds.shape[1]))
+    #             full_preds_n[:] = np.nan
+    #             full_preds_n[test_indices] = full_preds
+    #             all_full_preds.append(full_preds_n)
+    #     '''
