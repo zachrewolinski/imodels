@@ -15,6 +15,7 @@ from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 from functools import reduce
 from joblib import Parallel, delayed
+from imodels.tree.rf_plus.data_transformations.block_transformers import BlockPartitionedData
 
 
 def _fast_r2_score(y_true, y_pred, multiclass=False):
@@ -181,7 +182,31 @@ def _check_X(X):
         raise ValueError("Input X must be a pandas DataFrame or numpy array.")
     return X_array
 
- #def parallel_explainer(ex, row_to_explain):
-    #    return ex.shap_values(row_to_explain,silent=True)
-    #shap_values = Parallel(n_jobs=n_jobs)(delayed(parallel_explainer)(ex, X_test[i,:]) for i in range(len(X_test)))
-    #print(shap_values)
+
+def _tensorize_data(X,transformers):
+    """
+    Tensorize the data for RF+ model.
+    if tokenization_scheme is "feature", then the data is tokenized by feature.
+    if tokenization_scheme is "Tree", then the data is tokenized by tree.
+    """
+    tensorized_data = []
+    for transformer in transformers:
+        X_transformed = transformer.transform(X) #type: BlockPartitionedData
+        max_embedding_size = max(block.shape[1] for block in X_transformed._data_blocks)           
+        padded_matrices = [np.pad(matrix, ((0, 0), (0, max_embedding_size - matrix.shape[1])), mode='constant', constant_values=np.nan) for matrix in X_transformed._data_blocks]
+        padded_matrices = np.stack(padded_matrices, axis=1)
+        tensorized_data.append(padded_matrices) #each tree is one element 
+    return tensorized_data
+
+
+def _tensorize_data_by_tree(X,transformers):
+    tensorized_data = []
+    max_embedding_size = -1
+    for transformer in transformers:
+        X_transformed = transformer.transform(X).get_all_data() 
+        if X_transformed.shape[1] > max_embedding_size:
+            max_embedding_size = X_transformed.shape[1]
+        tensorized_data.append(X_transformed) 
+    tensorized_data = [np.pad(matrix, ((0, 0), (0, max_embedding_size - matrix.shape[1])), mode='constant', constant_values=np.nan) for matrix in tensorized_data]
+    tensorized_data = np.stack(tensorized_data, axis=1)
+    return tensorized_data

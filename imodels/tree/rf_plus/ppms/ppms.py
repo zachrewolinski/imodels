@@ -27,7 +27,6 @@ class PartialPredictionModelBase(ABC):
     """
 
     def __init__(self, estimator):
-        # print("PartialPredictionModelBase init")
         self.estimator = copy.deepcopy(estimator)
         self.is_fitted = False
 
@@ -123,7 +122,6 @@ class PartialPredictionModelBase(ABC):
         -------
         List of length n_features of partial predictions for each feature.
         """
-        # print("IN 'predict_partial' method of PartialPredictionModelBase")
         n_blocks = blocked_data.n_blocks
         partial_preds = {}
         for k in range(n_blocks):
@@ -253,6 +251,7 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
                 if self.cv_ridge == 0:
                     self.alpha_[j] = 0.000001
                 else:
+                    print("here")
                     cv = RidgeCV(alphas = self.alpha_grid, gcv_mode=self.gcv_mode,
                                 cv=self.cv_ridge)
                     cv.fit(X, yj)
@@ -307,11 +306,8 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         if len(block_indices) == 0:  # If empty block
             return self.intercept_pred
         else:
-            # print("N_OUTPUTS: ", self._n_outputs)
-            # SET ALL COLUMNS/STUMPS NOT FALLING IN SAMPLE'S DECISION PATH EQUAL TO COLUMN MEAN
             if zero_value is not None:
                 for idx in range(len(zero_value)):
-                    # print("IN HEYDAY ZONE")
                     # replace any observations in the idx-th column of data block which are equl to zero_value[idx]
                     # with the mean of the idx-th column of data block
                     data_block[:, idx] = np.where(data_block[:, idx] == zero_value[idx],
@@ -337,7 +333,6 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
 
     @property
     def intercept_pred(self):
-        # print("IN 'intercept_pred' method of _GlmPPM")
         if self._intercept_pred is None:
             self._intercept_pred = np.array([
                 _trim_values(self.inv_link_fn(self.coefficients_[j][-1]), self.trim) \
@@ -346,7 +341,6 @@ class _GlmPPM(PartialPredictionModelBase, ABC):
         return ("constant_model", self._intercept_pred)
 
     def _fit_coefficients(self, X, y, alpha):
-        # print("IN '_fit_coefficients' method of _GlmPPM")
         _set_alpha(self.estimator, alpha)
         self.estimator.fit(X, y)
         return _extract_coef_and_intercept(self.estimator)

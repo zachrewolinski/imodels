@@ -13,9 +13,10 @@ from joblib import Parallel, delayed
 from sklearn.model_selection import train_test_split
 from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, GlmClassifierPPM, RidgeRegressorPPM, LogisticClassifierPPM
-from imodels.tree.rf_plus.ppms.ppms_regression import ElasticNetRegressorPPM, RidgeRegressorPPM, LassoRegressorPPM
+from imodels.tree.rf_plus.ppms.ppms_regression import GlmNetElasticNetRegressorPPM, GlmNetRidgeRegressorPPM, GlmNetLassoRegressorPPM
+from imodels.tree.rf_plus.ppms.ppms_classification import GlmClassifierPPM, GLMLogisticElasticNetPPM
 from imodels.tree.rf_plus.mdi_plus import ForestMDIPlus, _get_sample_split_data
-from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy
+from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy, _tensorize_data, _tensorize_data_by_tree
 from functools import reduce
 from glmnet import ElasticNet, LogitNet
 
@@ -58,7 +59,7 @@ class _RandomForestPlus(BaseEstimator):
 
     def __init__(self, rf_model=None, prediction_model=None, include_raw=True, 
                  drop_features=True, add_transformers=None, center=True, cv = "loo",
-                 normalize=False, fit_on = "auto"):
+                 normalize=False, fit_on = "auto",verbose = False):
 
         assert fit_on in ["inbag","oob","all","auto"]
         
@@ -78,9 +79,9 @@ class _RandomForestPlus(BaseEstimator):
         
         if prediction_model is None:
             if self._task == "regression":
-                prediction_model = ElasticNetRegressorPPM(cv = cv)
+                prediction_model = GlmNetElasticNetRegressorPPM(cv = cv)
             elif self._task == "classification":
-                prediction_model = LogisticClassifierPPM(loo = True)
+                prediction_model = GLMLogisticElasticNetPPM(cv = cv)
         
         if fit_on == "auto":
             self.fit_on = "all"
@@ -100,9 +101,10 @@ class _RandomForestPlus(BaseEstimator):
         self.transformers_ = []
         self.estimators_ = []
         self._tree_random_states = []
+        self.verbose = verbose
   
 
-    def fit(self, X, y, sample_weight=None, n_jobs = None,**kwargs):
+    def fit(self, X, y, sample_weight=None, center = True, n_jobs = None,**kwargs):
         """
         Fit (or train) Random Forest Plus (RF+) prediction model.
 
@@ -126,7 +128,9 @@ class _RandomForestPlus(BaseEstimator):
         self.feature_names_ = None
         self._n_samples_train = X.shape[0]
 
-        
+        #if center:
+        #    X = X - X.mean(axis=0)
+
         X_array, y = _check_Xy(copy.deepcopy(X),y) 
         
         
@@ -147,7 +151,7 @@ class _RandomForestPlus(BaseEstimator):
         
         # fit model for each tree
    
-        def parallel_fit_helper(tree_model):
+        def parallel_fit_helper(tree_model,i):
             if self.add_transformers is None:
                 if self.include_raw:
                     transformer = MDIPlusDefaultTransformer(tree_model, drop_features=self.drop_features)
@@ -175,13 +179,13 @@ class _RandomForestPlus(BaseEstimator):
             
             return copy.deepcopy(self.prediction_model), copy.deepcopy(transformer), tree_model.random_state
         
-        results = Parallel(n_jobs=n_jobs)(delayed(parallel_fit_helper)(tree_model) for tree_model in self.rf_model.estimators_)
+        results = Parallel(n_jobs=n_jobs,verbose=int(self.verbose))(delayed(parallel_fit_helper)(tree_model,i) for i,tree_model in enumerate(self.rf_model.estimators_))
         for result in results:
             self.estimators_.append(result[0])
             self.transformers_.append(result[1])
             self._tree_random_states.append(result[2])
-       
-    def predict(self, X):
+
+    def predict(self, X,n_jobs = -1):
         """
         Make predictions on new data using the fitted model.
 
@@ -200,12 +204,15 @@ class _RandomForestPlus(BaseEstimator):
         check_is_fitted(self, "estimators_")
         X_array = _check_X(X)   
 
+        def parallel_predict_helper(estimator, transformer):
+            blocked_data = transformer.transform(X_array, center=self.center, normalize=self.normalize)
+            return estimator.predict(blocked_data.get_all_data())
+
         if self._task == "regression":
             predictions = 0
-            for estimator, transformer in zip(self.estimators_, self.transformers_):
-                blocked_data = transformer.transform(X_array, center=self.center, normalize=self.normalize)
-                predictions += estimator.predict(blocked_data.get_all_data())
-            predictions = predictions / len(self.estimators_)
+            predictions = Parallel(n_jobs=n_jobs)(delayed(parallel_predict_helper)(estimator, transformer) for estimator, transformer in zip(self.estimators_, self.transformers_))
+            return np.mean(np.vstack(predictions), axis=0)
+        
         elif self._task == "classification":
             prob_predictions = self.predict_proba(X_array)
             if prob_predictions.ndim == 1:
@@ -213,7 +220,7 @@ class _RandomForestPlus(BaseEstimator):
             predictions = self.rf_model.classes_[np.argmax(prob_predictions, axis=1)]
         return predictions
 
-    def predict_proba(self, X):
+    def predict_proba(self, X,n_jobs = -1):
         """
         Predict class probabilities on new data using the fitted
         (classification) model.
@@ -236,14 +243,13 @@ class _RandomForestPlus(BaseEstimator):
                 self.estimators_[0].__class__.__name__)
             )
         X_array = _check_X(X)
-
-        predictions = 0
-        for estimator, transformer in zip(self.estimators_, self.transformers_):
+        def parallel_predict_proba_helper(estimator, transformer):
             blocked_data = transformer.transform(X_array, center=self.center, normalize=self.normalize)
-            predictions += estimator.predict_proba(blocked_data.get_all_data())
-        predictions = predictions / len(self.estimators_)
-        return predictions
-    
+            return estimator.predict_proba(blocked_data.get_all_data())
+        
+        predictions = Parallel(n_jobs=n_jobs)(delayed(parallel_predict_proba_helper)(estimator, transformer) for estimator, transformer in zip(self.estimators_, self.transformers_))
+        return np.mean(np.vstack(predictions), axis=0)
+        
     def get_kernel_shap_scores(self, X_train: np.ndarray, X_test: np.ndarray,
                                p: float = 1, use_summary: bool = True,
                                k : int = 1) -> np.ndarray:
@@ -485,6 +491,15 @@ class _RandomForestPlus(BaseEstimator):
             pred_func = self.prediction_model.predict
         return pred_func
 
+    def tensorize(self, X, by = "feature"):
+        check_is_fitted(self, "estimators_")
+        X_array = _check_X(X)
+        if by == "feature":
+            return _tensorize_data(X_array, self.transformers_)
+        elif by == "tree":
+            return _tensorize_data_by_tree(X_array, self.transformers_)
+        else:
+            raise ValueError("by must be either 'feature' or 'tree'.")
 
 class RandomForestPlusRegressor(_RandomForestPlus, RegressorMixin):
     """
@@ -506,20 +521,37 @@ class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
 
 
 if __name__ == "__main__":
-    X, y,f = imodels.get_clean_dataset("abalone")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=1)
+    import warnings
 
-    pprint.pprint(f"Shape: {X_train.shape}")
+    # Suppress specific warning
+    warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+    
+    # X, y,f = imodels.get_clean_dataset("abalone")
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.8, random_state=1)
 
-    rf = RandomForestRegressor(n_estimators=10,min_samples_leaf=5,max_features=0.33,random_state=1)
+    # pprint.pprint(f"Shape: {X_train.shape}")
+
+    # rf = RandomForestRegressor(n_estimators=10,min_samples_leaf=5,max_features=0.33,random_state=1)
+    # rf.fit(X_train, y_train)
+    # pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
+
+    # rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf))
+    # rf_plus.fit(X_train, y_train,n_jobs=-1)
+    # pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
+
+    # Test Classification
+   
+
+    X, y,f = imodels.get_clean_dataset("enhancer")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=1)
+    
+    rf = RandomForestClassifier(n_estimators=10,min_samples_leaf=1,max_features=0.33,random_state=1)
     rf.fit(X_train, y_train)
-    pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
+    pprint.pprint(f"RF roc_auc_score: {roc_auc_score(y_test,rf.predict_proba(X_test)[:,1])}")
 
-    rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf))
+    rf_plus = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf))
     rf_plus.fit(X_train, y_train,n_jobs=-1)
-    pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
-
-
+    pprint.pprint(f"RF+ roc_auc_score: {roc_auc_score(y_test,rf_plus.predict_proba(X_test)[:,1])}")
 
 
 
