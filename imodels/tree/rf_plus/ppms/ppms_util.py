@@ -8,6 +8,10 @@ import warnings
 from functools import partial
 
 
+from scipy.sparse.linalg import cg
+from krylov import cg as krylov_cg
+
+
 def _extract_coef_and_intercept(estimator):
     """
     Get the coefficient vector and intercept from a GLM estimator
@@ -39,7 +43,7 @@ def _get_preds(data_block, coefs, inv_link_fn, intercept=None):
     else:
         if len(coefs) == (data_block.shape[1] + 1):
             intercept = coefs[-1]
-            coefs = coefs[:-1]
+            coefs = coefs[:-1]           
         lin_preds = data_block @ coefs + intercept
     return inv_link_fn(lin_preds)
 
@@ -94,3 +98,59 @@ def get_alpha_grid(X, y, start=-5, stop=5, num=100):
     base = np.max(alpha_opts_)
     alphas = np.logspace(start, stop, num=num) * base
     return alphas
+
+def fast_hessian_vector_inverse(H,X,tol = 1e-5):
+    p, n = X.shape
+    inverse_hvps = np.zeros((p, n))
+
+    for i in range(n):
+        vector = X[:, i].reshape(-1, 1)
+        inverse_hvp, _ = krylov_cg(H, vector, tol=tol)
+        inverse_hvps[:, i] = inverse_hvp.flatten()
+
+    return inverse_hvps
+
+
+
+def count_sketch_inverse(A, B, num_sketches=10):
+    """
+    Compute the approximate product of A^(-1) and B using CountSketch.
+
+    Parameters:
+    A (numpy.ndarray): The square matrix to be inverted.
+    B (numpy.ndarray): The matrix to be multiplied with A^(-1).
+    num_sketches (int): The number of sketches to use.
+
+    Returns:
+    numpy.ndarray: The approximate product A^(-1) B.
+    """
+    n, _ = A.shape
+    _, p = B.shape
+
+    # Initialize the sketch matrices
+    S = np.zeros((num_sketches, n, p))
+
+    for k in range(num_sketches):
+        # Generate random hash functions for rows and columns
+        row_hash = np.random.choice([-1, 1], size=n)
+        col_hash = np.random.choice([-1, 1], size=n)
+
+        # Compute the sketch matrix for the current iteration
+        sketch_A = np.zeros((n, n))
+        sketch_B = np.zeros((n, p))
+        for i in range(n):
+            for j in range(n):
+                sketch_A[i, j] = row_hash[i] * A[i, j] * col_hash[j]
+            for j in range(p):
+                sketch_B[i, j] = row_hash[i] * B[i, j]
+
+        # Compute the inverse of the sketch of A
+        sketch_inv = np.linalg.inv(sketch_A)
+
+        # Compute the approximate matrix product
+        S[k] = np.dot(sketch_inv, sketch_B)
+
+    # Compute the median of the sketches
+    AB_approx = np.median(S, axis=0)
+
+    return AB_approx

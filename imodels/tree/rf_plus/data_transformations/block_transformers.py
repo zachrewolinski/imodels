@@ -1,12 +1,13 @@
 from abc import ABC, abstractmethod
 
 import numpy as np
+import pprint
 from collections import defaultdict
 
 from sklearn.ensemble import BaseEnsemble
 from sklearn.ensemble._forest import _generate_unsampled_indices, _generate_sample_indices
 
-from .local_stumps import make_stumps, tree_feature_transform
+from imodels.tree.rf_plus.data_transformations.local_stumps import make_stumps, tree_feature_transform
 
 
 class BlockPartitionedData:
@@ -306,9 +307,7 @@ class BlockTransformerBase(ABC):
         zero_values = []
         for k in range(n_features):
             if zeros:
-                dat_block, zero_vec = self.transform_one_feature(X, k, center,
-                                                                 normalize,
-                                                                 zeros=zeros)
+                dat_block, zero_vec = self.transform_one_feature(X, k, center,normalize,zeros=zeros)
                 data_blocks.append(dat_block)
                 zero_values.append(zero_vec)
             else:
@@ -519,11 +518,8 @@ class CompositeTransformer(BlockTransformerBase, ABC):
             data_blocks.append(data_block)
 
         # Handle trivial blocks
-        self._trivial_block_indices[k] = \
-            [idx for idx, data_block in enumerate(data_blocks) if
-             _empty_or_constant(data_block)]
-        if (0 in self._trivial_block_indices[k] and self.drop_features) or \
-                (len(self._trivial_block_indices[k]) == len(data_blocks)):
+        self._trivial_block_indices[k] = [idx for idx, data_block in enumerate(data_blocks) if _empty_or_constant(data_block)]
+        if (0 in self._trivial_block_indices[k] and self.drop_features) or (len(self._trivial_block_indices[k]) == len(data_blocks)):
             # If first block is trivial and self.drop_features is True,
             self._centers[k] = np.array([0])
             self._scales[k] = np.array([1])
@@ -549,8 +545,7 @@ class CompositeTransformer(BlockTransformerBase, ABC):
         # Handle trivial blocks
         if (0 in self._trivial_block_indices[k] and self.drop_features) or \
                 (len(self._trivial_block_indices[k]) == len(data_blocks)):
-            # If first block is trivial and self.drop_features is True,
-            # return empty block
+            # If first block is trivial and self.drop_features is True, return empty block
             return np.empty((X.shape[0], 0))
         else:
             # Remove trivial blocks
@@ -591,6 +586,8 @@ class CompositeTransformer(BlockTransformerBase, ABC):
         self._centers[k] = composite_block.mean(axis=0)
         self._scales[k] = composite_block.std(axis=0)
         return composite_block
+    
+    
 
 
 class MDIPlusDefaultTransformer(CompositeTransformer, ABC):
@@ -603,11 +600,13 @@ class MDIPlusDefaultTransformer(CompositeTransformer, ABC):
     ----------
     tree_model: scikit-learn estimator
         The scikit-learn tree estimator object.
-    rescale_mode: string in {"max", "mean", None}
-        Flag for the type of rescaling to be done to the blocks from different
-        base transformers. If "max", divide each block by the max std deviation
-        of a column within the block. If "mean", divide each block by the mean
-        std deviation of a column within the block. If None, do not rescale.
+    rescale_mode: string in {"max", "mean", "identity", None}
+        Flag for the type of rescaling to be done to the blocks from DIFFERENT
+        base transformers. 
+            If "max", divide each block by the max std deviation of a column within the block. 
+            If "mean", divide each block by the mean std deviation of a column within the block. 
+            If "identity", all identity features are rescaled by the same factor.
+            If None, do not rescale.
     drop_features: bool
         Flag for whether to return an empty block if that from the first
         transformer in the list is trivial.
@@ -633,6 +632,11 @@ def _get_rescale_factors(data_blocks, rescale_mode):
                                   data_block in data_blocks])
     elif rescale_mode is None:
         scale_factors = np.ones(len(data_blocks))
+    elif rescale_mode == "identity":
+        scale_factors = np.array([max(data_block.std(axis=0)) for
+                                  data_block in data_blocks])
+        scale_factors = scale_factors / scale_factors[0]
+
     else:
         raise ValueError("Invalid rescale mode.")
     scale_factors = scale_factors / scale_factors[0]

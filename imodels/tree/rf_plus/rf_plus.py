@@ -5,20 +5,23 @@ from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
-from sklearn.metrics import r2_score, roc_auc_score, log_loss
+from sklearn.metrics import r2_score, roc_auc_score, log_loss, f1_score, average_precision_score, accuracy_score
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
 from tqdm import tqdm
+from xgboost import XGBRegressor, XGBClassifier
 from joblib import Parallel, delayed
 from sklearn.model_selection import train_test_split
 from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, GlmClassifierPPM, RidgeRegressorPPM, LogisticClassifierPPM
 from imodels.tree.rf_plus.ppms.ppms_regression import GlmNetElasticNetRegressorPPM, GlmNetRidgeRegressorPPM, GlmNetLassoRegressorPPM
-from imodels.tree.rf_plus.ppms.ppms_classification import GlmClassifierPPM, GLMLogisticElasticNetPPM
-from imodels.tree.rf_plus.mdi_plus import ForestMDIPlus, _get_sample_split_data
-from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy, _tensorize_data, _tensorize_data_by_tree
+from imodels.tree.rf_plus.ppms.ppms_classification import GlmClassifierPPM, GLMLogisticElasticNetPPM, GLMLogisticRidgeNetPPM, GLMLogisticLassoNetPPM
+from imodels.tree.rf_plus.mdi_plus import ForestMDIPlus
+from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy, _tensorize_data, _tensorize_data_by_tree, _get_sample_split_data
 from functools import reduce
+from sklearn.ensemble._forest import _generate_unsampled_indices, _generate_sample_indices
 from glmnet import ElasticNet, LogitNet
+from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
 
 class _RandomForestPlus(BaseEstimator):
     """
@@ -57,9 +60,9 @@ class _RandomForestPlus(BaseEstimator):
         variance in the transformers.
     """
 
-    def __init__(self, rf_model=None, prediction_model=None, include_raw=True, 
+    def __init__(self, rf_model=None, prediction_model=None, include_raw=True,
                  drop_features=True, add_transformers=None, center=True, cv = "loo",
-                 normalize=False, fit_on = "auto",verbose = False):
+                 normalize=False, fit_on = "auto",verbose = True):
 
         assert fit_on in ["inbag","oob","all","auto"]
         
@@ -79,9 +82,9 @@ class _RandomForestPlus(BaseEstimator):
         
         if prediction_model is None:
             if self._task == "regression":
-                prediction_model = GlmNetElasticNetRegressorPPM(cv = cv)
+                prediction_model =  GlmNetRidgeRegressorPPM(cv = cv) #GlmNetElasticNetRegressorPPM(cv = cv) #
             elif self._task == "classification":
-                prediction_model = GLMLogisticElasticNetPPM(cv = cv)
+                prediction_model = GLMLogisticRidgeNetPPM(cv = cv) #GLMLogisticLassoNetPPM(cv = cv) #GLMLogisticElasticNetPPM(cv = cv) #
         
         if fit_on == "auto":
             self.fit_on = "all"
@@ -90,7 +93,7 @@ class _RandomForestPlus(BaseEstimator):
         
         self.rf_model = rf_model
         self.cv = cv
-        self.prediction_model = prediction_model
+        self.initial_prediction_model = prediction_model
         self.include_raw = include_raw
         self.drop_features = drop_features
         self.add_transformers = add_transformers
@@ -104,7 +107,7 @@ class _RandomForestPlus(BaseEstimator):
         self.verbose = verbose
   
 
-    def fit(self, X, y, sample_weight=None, center = True, n_jobs = None,**kwargs):
+    def fit(self, X, y, sample_weight=None, n_jobs = None,rescale_mode = "max",**kwargs):
         """
         Fit (or train) Random Forest Plus (RF+) prediction model.
 
@@ -127,6 +130,7 @@ class _RandomForestPlus(BaseEstimator):
         self.mdi_plus_scores_ = None
         self.feature_names_ = None
         self._n_samples_train = X.shape[0]
+        self._loo_preds = None
 
         #if center:
         #    X = X - X.mean(axis=0)
@@ -142,7 +146,7 @@ class _RandomForestPlus(BaseEstimator):
             self.rf_model.fit(X, y, sample_weight=sample_weight)
         
         # onehot encode multiclass response for GlmClassiferPPM
-        if isinstance(self.prediction_model, GlmClassifierPPM):
+        if isinstance(self.initial_prediction_model, GlmClassifierPPM):
             self._multi_class = False
             if len(np.unique(y)) > 2:
                 self._multi_class = True
@@ -152,9 +156,11 @@ class _RandomForestPlus(BaseEstimator):
         # fit model for each tree
    
         def parallel_fit_helper(tree_model,i):
+            if self.verbose:
+                pprint.pprint(f"Fitting batch {i}")
             if self.add_transformers is None:
                 if self.include_raw:
-                    transformer = MDIPlusDefaultTransformer(tree_model, drop_features=self.drop_features)
+                    transformer = MDIPlusDefaultTransformer(tree_model,drop_features=self.drop_features)
                 else:
                     transformer = TreeTransformer(tree_model)
             else:
@@ -165,19 +171,27 @@ class _RandomForestPlus(BaseEstimator):
                 transformer = CompositeTransformer(base_transformer_list + self.add_transformers,
                                                    drop_features=self.drop_features)
             
-            # do sample split
+            
             blocked_data = transformer.fit_transform(X_array, center=self.center, normalize=self.normalize)
+            #blocked_data = transformer.fit_transform(X_array, center=self.center, normalize=self.normalize)
+            prediction_model = copy.deepcopy(self.initial_prediction_model)
+            # do sample split
             in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, in_bag_indices,oob_indices = _get_sample_split_data(blocked_data, y, tree_model.random_state)
             # fit prediction model
-            if in_bag_blocked_data.get_all_data().shape[1] != 0:  # if tree has >= 1 split
-                if self.fit_on == "inbag":
-                    self.prediction_model.fit(in_bag_blocked_data.get_all_data(), y_in_bag, **kwargs)
-                elif self.fit_on == "oob":
-                    self.prediction_model.fit(oob_blocked_data.get_all_data(), y_oob, **kwargs)
-                else:
-                    self.prediction_model.fit(blocked_data.get_all_data(), y, **kwargs)
+            if self.fit_on == "inbag":
+                train_blocked, train_y = in_bag_blocked_data, y_in_bag
+            elif self.fit_on == "oob":
+                train_blocked, train_y = oob_blocked_data, y_oob
+            else:
+                train_blocked, train_y = blocked_data, y
+
+            if in_bag_blocked_data.get_all_data().shape[1] != 0:
+                prediction_model.fit(in_bag_blocked_data.get_all_data(), y_in_bag, **kwargs)
             
-            return copy.deepcopy(self.prediction_model), copy.deepcopy(transformer), tree_model.random_state
+            
+            return copy.deepcopy(prediction_model), copy.deepcopy(transformer), tree_model.random_state
+        
+
         
         results = Parallel(n_jobs=n_jobs,verbose=int(self.verbose))(delayed(parallel_fit_helper)(tree_model,i) for i,tree_model in enumerate(self.rf_model.estimators_))
         for result in results:
@@ -185,7 +199,10 @@ class _RandomForestPlus(BaseEstimator):
             self.transformers_.append(result[1])
             self._tree_random_states.append(result[2])
 
-    def predict(self, X,n_jobs = -1):
+        # compute feature importances
+            
+
+    def predict(self, X,n_jobs = 1):
         """
         Make predictions on new data using the fitted model.
 
@@ -220,7 +237,7 @@ class _RandomForestPlus(BaseEstimator):
             predictions = self.rf_model.classes_[np.argmax(prob_predictions, axis=1)]
         return predictions
 
-    def predict_proba(self, X,n_jobs = -1):
+    def predict_proba(self, X,n_jobs = 1):
         """
         Predict class probabilities on new data using the fitted
         (classification) model.
@@ -294,6 +311,7 @@ class _RandomForestPlus(BaseEstimator):
         else:
             model_pred_func = self.predict_proba
         return _get_lime_scores_rf_plus(model_pred_func,self._task,X_train,X_test,self.random_state)
+    
     
     def get_mdi_plus_scores(self, X=None, y=None,
                             scoring_fns="auto", local_scoring_fns=False,
@@ -526,34 +544,96 @@ if __name__ == "__main__":
     # Suppress specific warning
     warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
     
-    # X, y,f = imodels.get_clean_dataset("abalone")
-    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.8, random_state=1)
+    X, y,f = imodels.get_clean_dataset("abalone")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=1)
 
-    # pprint.pprint(f"Shape: {X_train.shape}")
+    pprint.pprint(f"Shape: {X_train.shape}")
 
-    # rf = RandomForestRegressor(n_estimators=10,min_samples_leaf=5,max_features=0.33,random_state=1)
-    # rf.fit(X_train, y_train)
-    # pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
+    rf = RandomForestRegressor(n_estimators=1,min_samples_leaf=1,max_features="sqrt",random_state=1)
+    rf.fit(X_train, y_train)
+    
+    rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf))
+    rf_plus.fit(X_train, y_train,n_jobs=min(rf.n_estimators,8))
 
-    # rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf))
-    # rf_plus.fit(X_train, y_train,n_jobs=-1)
-    # pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
+    gbr = GradientBoostingRegressor()
+    gbr.fit(X_train, y_train)
+
+    xgbr = XGBRegressor()
+    xgbr.fit(X_train, y_train)
+
+    pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
+
+    pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
+
+    pprint.pprint(f"GBC r2_score: {r2_score(y_test,gbr.predict(X_test))}")
+
+    pprint.pprint(f"XGB r2_score: {r2_score(y_test,xgbr.predict(X_test))}")
+
+    X, y,f = imodels.get_clean_dataset("fico")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.9)
+    
+    rf = RandomForestClassifier(n_estimators=1,min_samples_leaf=1,max_features="sqrt",class_weight="balanced")
+    rf.fit(X_train, y_train)
+
+    print(X_train.shape)
+    rf_plus = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf))
+    rf_plus.fit(X_train, y_train,n_jobs=1)
+
+    n_pos = np.sum(y_train)
+    n_neg = len(y_train) - n_pos
+    weight_pos = (1 / n_pos) * (n_pos + n_neg) / 2.0
+    weight_neg = (1 / n_neg) * (n_pos + n_neg) / 2.0
+    sample_weights = np.where(y_train == 1, weight_pos, weight_neg) 
+    gbc = GradientBoostingClassifier()
+    gbc.fit(X_train, y_train,sample_weight=sample_weights)
+
+    prob_metrics = [roc_auc_score,average_precision_score]
+    class_metrics = [f1_score,accuracy_score]
+
+    for metric in prob_metrics:
+        pprint.pprint(f"RF {metric.__name__}: {metric(y_test,rf.predict_proba(X_test)[:,1])}")
+        pprint.pprint(f"RF+ {metric.__name__}: {metric(y_test,rf_plus.predict_proba(X_test))}")
+        pprint.pprint(f"GBC {metric.__name__}: {metric(y_test,gbc.predict_proba(X_test)[:,1])}")
+    
+    for metric in class_metrics:
+        pprint.pprint(f"RF {metric.__name__}: {metric(y_test,rf.predict(X_test))}")
+        pprint.pprint(f"RF+ {metric.__name__}: {metric(y_test,rf_plus.predict(X_test))}")
+        pprint.pprint(f"GBC {metric.__name__}: {metric(y_test,gbc.predict(X_test))}")
+   
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
     # Test Classification
    
 
-    X, y,f = imodels.get_clean_dataset("enhancer")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=1)
+    # X, y,f = imodels.get_clean_dataset("fico")
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.5)
     
-    rf = RandomForestClassifier(n_estimators=10,min_samples_leaf=1,max_features=0.33,random_state=1)
-    rf.fit(X_train, y_train)
-    pprint.pprint(f"RF roc_auc_score: {roc_auc_score(y_test,rf.predict_proba(X_test)[:,1])}")
+    # rf = RandomForestClassifier(n_estimators=1,min_samples_leaf=1,max_features="sqrt",class_weight="balanced")
+    # rf.fit(X_train, y_train)
 
-    rf_plus = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf))
-    rf_plus.fit(X_train, y_train,n_jobs=-1)
-    pprint.pprint(f"RF+ roc_auc_score: {roc_auc_score(y_test,rf_plus.predict_proba(X_test)[:,1])}")
+  
+    
 
 
+    
 
 
      

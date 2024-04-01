@@ -15,7 +15,8 @@ from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 from functools import reduce
 from joblib import Parallel, delayed
-from imodels.tree.rf_plus.data_transformations.block_transformers import BlockPartitionedData
+from imodels.tree.rf_plus.data_transformations.block_transformers import BlockPartitionedData, _blocked_train_test_split
+from sklearn.ensemble._forest import _generate_unsampled_indices, _generate_sample_indices
 
 
 def _fast_r2_score(y_true, y_pred, multiclass=False):
@@ -210,3 +211,22 @@ def _tensorize_data_by_tree(X,transformers):
     tensorized_data = [np.pad(matrix, ((0, 0), (0, max_embedding_size - matrix.shape[1])), mode='constant', constant_values=np.nan) for matrix in tensorized_data]
     tensorized_data = np.stack(tensorized_data, axis=1)
     return tensorized_data
+
+def _get_sample_split_data(blocked_data, y, random_state):
+    in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, in_bag_indices, oob_indices = _blocked_train_test_split(blocked_data,y,random_state)
+    return in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, in_bag_indices,oob_indices
+
+
+def _compute_tree_LOO_partial_preds(X,estimator,transformer,center,normalize,random_state,fit_on):
+     
+    n_samples = X.shape[0]    
+    blocked_data = transformer.transform(X,center,normalize)
+    pass
+    
+
+
+def _compute_tree_LOO_preds(X,estimator,transformer,center,normalize,random_state,fit_on):
+     
+    n_samples = X.shape[0]    
+    blocked_data = transformer.transform(X,center,normalize)
+    
