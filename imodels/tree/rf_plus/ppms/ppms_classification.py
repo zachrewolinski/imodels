@@ -26,6 +26,7 @@ from scipy.sparse import csr_matrix
 from sklearn.utils.extmath import randomized_svd
 from collections import OrderedDict
 from scipy import linalg
+from imodels.tree.rf_plus.ppms.SVM_Classifier_Wrapper import CustomSVMClassifier, derivative_squared_hinge_loss, second_derivative_squared_hinge_loss
 
 class GlmClassifierPPM(PartialPredictionModelBase, ABC):
     """
@@ -57,14 +58,22 @@ class GlmClassifierPPM(PartialPredictionModelBase, ABC):
     def _fit_model(self, X, y):
 
         y_train = y
-        if self.sample_weights == 'balanced':
-            n_pos = np.sum(y_train)
-            n_neg = len(y_train) - n_pos
-            weight_pos = (1 / n_pos) * (n_pos + n_neg) / 2.0
-            weight_neg = (1 / n_neg) * (n_pos + n_neg) / 2.0
-            self.sample_weights = np.where(y_train == 1, weight_pos, weight_neg) * len(y_train)
+        
+        #Process Sample Weights
+        if self.sample_weights is None:
+            self.sample_weights = np.ones(len(y_train))
         else:
-            self.sample_weights = np.ones(len(y_train))/len(y_train)
+            if self.sample_weights == 'balanced':
+                n_pos = np.sum(y_train)
+                n_neg = len(y_train) - n_pos
+                weight_pos = (1 / n_pos) * (n_pos + n_neg) / 2.0
+                weight_neg = (1 / n_neg) * (n_pos + n_neg) / 2.0
+                self.sample_weights = np.where(y_train == 1, weight_pos, weight_neg) * len(y_train)
+            else:
+                assert len(self.sample_weights) == len(y_train), "Sample weights must be the same length as the target"
+        
+        
+        
         self.estimator.fit(X, y_train, sample_weight=self.sample_weights)   
 
         
@@ -82,7 +91,9 @@ class GlmClassifierPPM(PartialPredictionModelBase, ABC):
             self.coefficients_ = self._augmented_coeffs_for_each_alpha[self.alpha_]
             self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
 
+    # Not sure if sample weights make sense during leave one out cross validation. 
     def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-4):
+        
         all_support_idxs = {}
         X1 = np.hstack([X, np.ones((X.shape[0], 1))])
         cv_scores = []
@@ -92,6 +103,7 @@ class GlmClassifierPPM(PartialPredictionModelBase, ABC):
         best_influence_matrix = None
         min_lambda_ = np.min(self.estimator.lambda_path_)
 
+        #self.sample_weights = np.ones(y.shape[0])
 
         for i,lambda_ in enumerate(self.estimator.lambda_path_):
             orig_coef_ = self._augmented_coeffs_for_each_alpha[lambda_]
@@ -103,7 +115,7 @@ class GlmClassifierPPM(PartialPredictionModelBase, ABC):
             else:
                 evals, evecs = all_support_idxs[tuple(support_idxs_lambda_)]
             orig_preds = _get_preds(X, orig_coef_, self.inv_link_fn)
-            l_doubledot_vals = self.l_doubledot(y, orig_preds) 
+            l_doubledot_vals = self.l_doubledot(y, orig_preds) #* self.sample_weights
             orig_coef_ = orig_coef_[np.array(support_idxs_lambda_)]
             if self.r_doubledot is not None:
                 r_doubledot_vals = self.r_doubledot(orig_coef_) * np.ones_like(orig_coef_)
@@ -115,16 +127,19 @@ class GlmClassifierPPM(PartialPredictionModelBase, ABC):
             evecs_Diag = Diag_ * evecs
             normal_eqn_mat = evecs_Diag @ X1_support.T
 
-            h_vals = np.sum(X1_support.T * normal_eqn_mat, axis=0) * l_doubledot_vals
+            h_vals = np.sum(X1_support.T * normal_eqn_mat, axis=0) * l_doubledot_vals 
             h_vals[h_vals == 1] = max_h
-            influence_matrix = normal_eqn_mat * self.l_dot(y, orig_preds) / (1 - h_vals)
+            l_dot_vals = self.l_dot(y, orig_preds) #* self.sample_weights
+            influence_matrix = normal_eqn_mat * l_dot_vals / (1 - h_vals)
             loo_coef_ = orig_coef_[:, np.newaxis] + influence_matrix 
             if not all(support_idxs_lambda_):
                 loo_coef_dense_ = np.zeros((X1.shape[1], X.shape[0]))
                 loo_coef_dense_[support_idxs_lambda_, :] = loo_coef_
                 loo_coef_ = loo_coef_dense_
+            
             sample_preds =  self.inv_link_fn(np.sum(loo_coef_.T * X1, axis=1))
-            sample_scores = self.hyperparameter_scorer(y, sample_preds)
+            sample_scores = self.hyperparameter_scorer(y, sample_preds)#,sample_weight=self.sample_weights)
+            
             if sample_scores < best_cv_:
                 best_cv_ = sample_scores
                 best_lambda_ = lambda_
@@ -240,21 +255,39 @@ class GLMLogisticRidgeNetPPM(GlmClassifierPPM):
 
 
 
-class GLMSVMPPM(GlmClassifierPPM):
-    pass 
+class SVCRidgePPM(GlmClassifierPPM, CustomSVMClassifier):
+    """
+    PPM class for SVM Classifier
+    """
 
+    def __init__(self, cv="loo", n_alphas=20,sample_weights = 'balanced',**kwargs):
+        if cv == "loo":
+            n_splits = 0
+        else:
+            raise ValueError("Only leave one out cross validation is supported for SVM")
+        
+        super().__init__(CustomSVMClassifier(n_alphas=n_alphas, **kwargs), 
+                        cv,inv_link_fn=sp.special.expit, l_dot= derivative_squared_hinge_loss,
+                        l_doubledot= second_derivative_squared_hinge_loss, r_doubledot= lambda a: 1,
+                        sample_weights = sample_weights,hyperparameter_scorer=log_loss)
+        
+   
 if __name__ == "__main__":
     # from sklearn.datasets import make_regression
     warnings.filterwarnings("ignore")
     from sklearn.model_selection import train_test_split
 
     X,y,f = imodels.get_clean_dataset("enhancer",data_source="imodels")
-    X_train, X_test, y_train, y_test = train_test_split(X, y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.8, random_state=42)
     
 
     model = GLMLogisticElasticNetPPM(l1_ratio=0.5)
     model.fit(X_train, y_train)
     print(model.influence_matrix_.shape)
+
+    model = SVCRidgePPM()
+    model.fit(X_train, y_train)
+
 
 
 

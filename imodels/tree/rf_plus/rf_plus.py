@@ -12,10 +12,11 @@ from tqdm import tqdm
 from xgboost import XGBRegressor, XGBClassifier
 from joblib import Parallel, delayed
 from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, GlmClassifierPPM, RidgeRegressorPPM, LogisticClassifierPPM
 from imodels.tree.rf_plus.ppms.ppms_regression import GlmNetElasticNetRegressorPPM, GlmNetRidgeRegressorPPM, GlmNetLassoRegressorPPM
-from imodels.tree.rf_plus.ppms.ppms_classification import GlmClassifierPPM, GLMLogisticElasticNetPPM, GLMLogisticRidgeNetPPM, GLMLogisticLassoNetPPM
+from imodels.tree.rf_plus.ppms.ppms_classification import GlmClassifierPPM, GLMLogisticElasticNetPPM, GLMLogisticRidgeNetPPM, GLMLogisticLassoNetPPM, SVCRidgePPM
 from imodels.tree.rf_plus.mdi_plus import ForestMDIPlus
 from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy, _tensorize_data, _tensorize_data_by_tree, _get_sample_split_data
 from functools import reduce
@@ -84,7 +85,7 @@ class _RandomForestPlus(BaseEstimator):
             if self._task == "regression":
                 prediction_model =  GlmNetRidgeRegressorPPM(cv = cv) #GlmNetElasticNetRegressorPPM(cv = cv) #
             elif self._task == "classification":
-                prediction_model = GLMLogisticRidgeNetPPM(cv = cv) #GLMLogisticLassoNetPPM(cv = cv) #GLMLogisticElasticNetPPM(cv = cv) #
+                prediction_model = SVCRidgePPM(cv=cv)#GLMLogisticRidgeNetPPM(cv = cv) #GLMLogisticLassoNetPPM(cv = cv) #GLMLogisticElasticNetPPM(cv = cv) #
         
         if fit_on == "auto":
             self.fit_on = "all"
@@ -542,42 +543,47 @@ if __name__ == "__main__":
     import warnings
 
     # Suppress specific warning
-    warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
+    # warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
     
-    X, y,f = imodels.get_clean_dataset("abalone")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=1)
+    # X, y,f = imodels.get_clean_dataset("287",data_source="openml")
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.8, random_state=1)
 
-    pprint.pprint(f"Shape: {X_train.shape}")
+    # pprint.pprint(f"Shape: {X_train.shape}")
 
-    rf = RandomForestRegressor(n_estimators=1,min_samples_leaf=1,max_features="sqrt",random_state=1)
-    rf.fit(X_train, y_train)
+    # rf = RandomForestRegressor(n_estimators=16,min_samples_leaf=5,max_features="sqrt",random_state=1)
+    # rf.fit(X_train, y_train)
     
-    rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf))
-    rf_plus.fit(X_train, y_train,n_jobs=min(rf.n_estimators,8))
+    # rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf))
+    # rf_plus.fit(X_train, y_train,n_jobs=min(rf.n_estimators,8))
 
-    gbr = GradientBoostingRegressor()
-    gbr.fit(X_train, y_train)
+    # gbr = GradientBoostingRegressor()
+    # gbr.fit(X_train, y_train)
 
-    xgbr = XGBRegressor()
-    xgbr.fit(X_train, y_train)
+    # xgbr = XGBRegressor()
+    # xgbr.fit(X_train, y_train)
 
-    pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
+    # pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
 
-    pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
+    # pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
 
-    pprint.pprint(f"GBC r2_score: {r2_score(y_test,gbr.predict(X_test))}")
+    # pprint.pprint(f"GBC r2_score: {r2_score(y_test,gbr.predict(X_test))}")
 
-    pprint.pprint(f"XGB r2_score: {r2_score(y_test,xgbr.predict(X_test))}")
+    # pprint.pprint(f"XGB r2_score: {r2_score(y_test,xgbr.predict(X_test))}")
 
+    
+    
     X, y,f = imodels.get_clean_dataset("fico")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.9)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.8)
     
-    rf = RandomForestClassifier(n_estimators=1,min_samples_leaf=1,max_features="sqrt",class_weight="balanced")
+    rf = RandomForestClassifier(n_estimators=2,min_samples_leaf=1,max_features="sqrt",class_weight="balanced")
     rf.fit(X_train, y_train)
 
     print(X_train.shape)
     rf_plus = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf))
     rf_plus.fit(X_train, y_train,n_jobs=1)
+
+    rf_plus_svm = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf),prediction_model=SVCRidgePPM())
+    rf_plus_svm.fit(X_train, y_train,n_jobs=1)
 
     n_pos = np.sum(y_train)
     n_neg = len(y_train) - n_pos
@@ -587,18 +593,25 @@ if __name__ == "__main__":
     gbc = GradientBoostingClassifier()
     gbc.fit(X_train, y_train,sample_weight=sample_weights)
 
+    lr = LogisticRegressionCV(class_weight="balanced")
+    lr.fit(X_train, y_train)
+
     prob_metrics = [roc_auc_score,average_precision_score]
     class_metrics = [f1_score,accuracy_score]
 
     for metric in prob_metrics:
         pprint.pprint(f"RF {metric.__name__}: {metric(y_test,rf.predict_proba(X_test)[:,1])}")
         pprint.pprint(f"RF+ {metric.__name__}: {metric(y_test,rf_plus.predict_proba(X_test))}")
+        pprint.pprint(f"RF+ SVM {metric.__name__}: {metric(y_test,rf_plus_svm.predict_proba(X_test))}")
         pprint.pprint(f"GBC {metric.__name__}: {metric(y_test,gbc.predict_proba(X_test)[:,1])}")
+        pprint.pprint(f"LR {metric.__name__}: {metric(y_test,lr.predict_proba(X_test)[:,1])}")
     
     for metric in class_metrics:
         pprint.pprint(f"RF {metric.__name__}: {metric(y_test,rf.predict(X_test))}")
         pprint.pprint(f"RF+ {metric.__name__}: {metric(y_test,rf_plus.predict(X_test))}")
+        pprint.pprint(f"RF+ SVM {metric.__name__}: {metric(y_test,rf_plus_svm.predict(X_test))}")
         pprint.pprint(f"GBC {metric.__name__}: {metric(y_test,gbc.predict(X_test))}")
+        pprint.pprint(f"LR {metric.__name__}: {metric(y_test,lr.predict(X_test))}")
    
 
 
