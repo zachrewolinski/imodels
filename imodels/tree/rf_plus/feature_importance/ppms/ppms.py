@@ -534,10 +534,12 @@ class RobustRegressorPPM(GlmRegressorPPM, PartialPredictionModelBase, ABC):
     """
     def __init__(self, loo=True, alpha_grid=np.logspace(-2, 3, 25),
                  epsilon=1.35, max_iter=2000, **kwargs):
-        # print("CREATING RobustRegressorPPM OBJECT")
+        
+
         loss_fn = partial(huber_loss, epsilon=epsilon)
         l_dot = lambda a, b: (b - a) / (1 + ((a - b) / epsilon) ** 2) ** 0.5
         l_doubledot=lambda a, b: (1 + (((a - b) / epsilon) ** 2)) ** (-1.5)
+        
         super().__init__(
             HuberRegressor(max_iter=max_iter, **kwargs), loo, alpha_grid,
             l_dot=l_dot,

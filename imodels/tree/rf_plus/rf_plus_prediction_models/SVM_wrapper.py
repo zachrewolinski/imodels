@@ -1,23 +1,20 @@
+#Generic Imports
 import copy, pprint, warnings, imodels
 from abc import ABC, abstractmethod
 from functools import partial
-
 import numpy as np
 import scipy as sp
 import pandas as pd
 
-from sklearn.linear_model import RidgeCV, Ridge, LogisticRegression, HuberRegressor, Lasso
-from sklearn.metrics import log_loss, mean_squared_error, r2_score, roc_auc_score, log_loss
-from scipy.special import softmax
-from scipy import sparse
-from glmnet import LogitNet
-warnings.filterwarnings("ignore")
-from scipy.special import expit, logit
 
+#sklearn imports
 from sklearn.svm import LinearSVC, LinearSVR
 from sklearn.linear_model import SGDClassifier
 from sklearn.datasets import make_classification
+from sklearn.metrics import log_loss, mean_squared_error, r2_score, roc_auc_score, log_loss
 
+
+from scipy.special import expit, logit
 
 
 class CustomSVMClassifier(LinearSVC):
@@ -63,6 +60,7 @@ class CustomSVMClassifier(LinearSVC):
         self.intercept_path_ = np.zeros((1,self.n_alphas))
         for i,lambda_ in enumerate(self.lambda_path_):
             self.estimator.set_params(C=1/lambda_)
+            print(self.estimator.dual)
             self.estimator.fit(X, y,sample_weight=sample_weight)
             self.coef_path_[0,:,i] = self.estimator.coef_[0,:]
             self.intercept_path_[0,i] = self.estimator.intercept_[0]

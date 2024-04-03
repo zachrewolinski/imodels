@@ -633,10 +633,7 @@ def _get_rescale_factors(data_blocks, rescale_mode):
     elif rescale_mode is None:
         scale_factors = np.ones(len(data_blocks))
     elif rescale_mode == "identity":
-        scale_factors = np.array([max(data_block.std(axis=0)) for
-                                  data_block in data_blocks])
-        scale_factors = scale_factors / scale_factors[0]
-
+        raise NotImplementedError("Identity rescaling not yet implemented. Here, we want all raw features to have the same scale")
     else:
         raise ValueError("Invalid rescale mode.")
     scale_factors = scale_factors / scale_factors[0]

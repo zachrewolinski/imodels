@@ -217,16 +217,4 @@ def _get_sample_split_data(blocked_data, y, random_state):
     return in_bag_blocked_data, oob_blocked_data, y_in_bag, y_oob, in_bag_indices,oob_indices
 
 
-def _compute_tree_LOO_partial_preds(X,estimator,transformer,center,normalize,random_state,fit_on):
-     
-    n_samples = X.shape[0]    
-    blocked_data = transformer.transform(X,center,normalize)
-    pass
-    
-
-
-def _compute_tree_LOO_preds(X,estimator,transformer,center,normalize,random_state,fit_on):
-     
-    n_samples = X.shape[0]    
-    blocked_data = transformer.transform(X,center,normalize)
     
