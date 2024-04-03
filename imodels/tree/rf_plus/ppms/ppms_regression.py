@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy as sp
 import pandas as pd
-import time 
+import time, numbers
 from tqdm import tqdm
 from sklearn.linear_model import RidgeCV, Ridge, LogisticRegression, HuberRegressor, Lasso
 from sklearn.metrics import log_loss, mean_squared_error, r2_score
@@ -17,17 +17,18 @@ from scipy.sparse import csc_matrix
 from scipy import linalg
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, _GlmPPM
 from collections import OrderedDict
-from imodels.tree.rf_plus.ppms.ppms_util import _extract_coef_and_intercept, _get_preds
+from imodels.tree.rf_plus.ppms.ppms_util import _extract_coef_and_intercept, _get_preds, _get_loo_coefficients, neg_r2_score
+from sklearn.linear_model import RidgeCV
 
 
 class GlmNetRegressorPPM(PartialPredictionModelBase, ABC):
     """
     PPM class for GLM regression estimator based on the glmnet implementation.
     """
-    def __init__(self, estimator, cv="loo", n_alphas=100, l1_ratio=0.2,
-                 inv_link_fn=lambda a: a, l_dot=lambda a, b: b - a,
+    def __init__(self, estimator, cv="loo", n_alphas=100, l1_ratio=0.0, standardize = False,
+                 inv_link_fn=lambda a: a, l_dot=lambda a, b: b - a, 
                  l_doubledot=lambda a, b: 1, r_doubledot=lambda a: 1,
-                 hyperparameter_scorer=mean_squared_error):
+                 hyperparameter_scorer=neg_r2_score):
         
         super().__init__(estimator)
         self.cv = cv
@@ -45,29 +46,33 @@ class GlmNetRegressorPPM(PartialPredictionModelBase, ABC):
         self.l1_ratio = l1_ratio
         self.influence_matrix_ = None
         self.support_idxs = None
-
+        self.standardize = standardize
+        
     def _fit_model(self, X, y):
-        y_train = y
+        y_train = copy.deepcopy(y)
         self.estimator.fit(X, y_train)
+
         for i,lambda_ in enumerate(self.estimator.lambda_path_):
             self._augmented_coeffs_for_each_alpha[lambda_] = np.hstack([self.estimator.coef_path_[:, i],self.estimator.intercept_path_[i]])         
 
         if self.cv == "loo":   
-           self._get_aloocv_alpha(X, y)
+           self._get_aloocv_alpha(X, y_train)  
            self.coefficients_ = self._augmented_coeffs_for_each_alpha[self.alpha_]
            self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
 
         else:
-            self.alpha_ = self.estimator.lambda_best_[0]
+            self.alpha_ = self.estimator.lambda_max_[0]
             self.coefficients_ = self._augmented_coeffs_for_each_alpha[self.alpha_]
 
-    def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-4):
+    def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-5):
+        #Assume we are solving 1/n l_i + lambda * r
+       
         all_support_idxs = {}
         X1 = np.hstack([X, np.ones((X.shape[0], 1))])
+        n = X1.shape[0]
         best_lambda_ = -1
         best_cv_ = np.inf
-        best_loo_coefs = None
-        best_influence_matrix = None
+ 
         #get min of self.estimator.lambda_path
         min_lambda_ = np.min(self.estimator.lambda_path_)
 
@@ -75,46 +80,51 @@ class GlmNetRegressorPPM(PartialPredictionModelBase, ABC):
             orig_coef_ = self._augmented_coeffs_for_each_alpha[lambda_]
             support_idxs_lambda_ = orig_coef_ != 0
             X1_support = X1[:, support_idxs_lambda_]
+            
             if tuple(support_idxs_lambda_) not in all_support_idxs:
-                evals, evecs = np.linalg.eigh(X1_support.T @ X1_support)
-                all_support_idxs[tuple(support_idxs_lambda_)] = evals, evecs
+
+                u,s,vh =  linalg.svd(X1_support,full_matrices=False)  
+                us = u * s
+                ush = us.T
+                all_support_idxs[tuple(support_idxs_lambda_)] = s,us,ush
             else:
-                evals, evecs = all_support_idxs[tuple(support_idxs_lambda_)]
+                s,us,ush = all_support_idxs[tuple(support_idxs_lambda_)]
+            
             orig_preds = _get_preds(X, orig_coef_, self.inv_link_fn)
-            l_doubledot_vals = self.l_doubledot(y, orig_preds) 
+            l_doubledot_vals = self.l_doubledot(y, orig_preds)/n 
             orig_coef_ = orig_coef_[np.array(support_idxs_lambda_)]
+            
             if self.r_doubledot is not None:
                 r_doubledot_vals = self.r_doubledot(orig_coef_) * np.ones_like(orig_coef_)
                 r_doubledot_vals[-1] = 0
-                reg_curvature = lambda_ * r_doubledot_vals
-            else:  
-                reg_curvature = min_lambda_ * np.ones_like(orig_coef_)
-            Diag_ = 1.0/(evals + reg_curvature)
-            evecs_Diag = Diag_ * evecs
-            normal_eqn_mat = evecs_Diag @ X1_support.T
+                reg_curvature =  lambda_ * r_doubledot_vals
+            else: 
+                r_doubledot_vals = self.r_doubledot(orig_coef_) * np.ones_like(orig_coef_) 
+                r_doubledot_vals[-1] = 0
+                reg_curvature =  min_lambda_ * r_doubledot_vals
+            
+            if l_doubledot_vals is isinstance(l_doubledot_vals, numbers.Number):
+                diag_elements = s * l_doubledot_vals * s
+            else:
+                diag_elements = s * l_doubledot_vals[:len(s)] * s
 
-            h_vals = np.sum(X1_support.T * normal_eqn_mat, axis=0) * l_doubledot_vals
+            
+            Sigma2_plus_lambda = diag_elements + reg_curvature
+            Sigma2_plus_lambda_inverse = 1.0/(Sigma2_plus_lambda)
+            
+            h_vals = np.einsum('ij,j,jk->i', us,Sigma2_plus_lambda_inverse,ush,optimize=True) * l_doubledot_vals
             h_vals[h_vals == 1] = max_h
-            influence_matrix = normal_eqn_mat * self.l_dot(y, orig_preds) / (1 - h_vals)
-            loo_coef_ = orig_coef_[:, np.newaxis] + influence_matrix 
-            if not all(support_idxs_lambda_):
-                loo_coef_dense_ = np.zeros((X1.shape[1], X.shape[0]))
-                loo_coef_dense_[support_idxs_lambda_, :] = loo_coef_
-                loo_coef_ = loo_coef_dense_
-            sample_preds =  self.inv_link_fn(np.sum(loo_coef_.T * X1, axis=1))
-            sample_scores = self.hyperparameter_scorer(y, sample_preds)
+            l_dot_vals = self.l_dot(y, orig_preds) / n
+            loo_preds = orig_preds + h_vals * l_dot_vals / (1 - h_vals)
+            sample_scores = self.hyperparameter_scorer(y, loo_preds)
             if sample_scores < best_cv_:
                 best_cv_ = sample_scores
                 best_lambda_ = lambda_
-                best_loo_coefs = loo_coef_
-                best_influence_matrix = influence_matrix
-        
+
         self.alpha_ = best_lambda_
-        self.loo_coefficients_ = best_loo_coefs
-        self.influence_matrix_ = best_influence_matrix
+        self.loo_coefficients_,self.influence_matrix_ = _get_loo_coefficients(X, y,self._augmented_coeffs_for_each_alpha[self.alpha_],self.alpha_,
+                                                                              self.inv_link_fn,self.l_doubledot,self.r_doubledot, self.l_dot)
     
-
-
     def predict(self, X):
         preds = _get_preds(X, self.coefficients_, self.inv_link_fn)
         return preds
@@ -175,28 +185,29 @@ class GlmNetElasticNetRegressorPPM(GlmNetRegressorPPM):
             n_splits = 0
         else:
             n_splits = cv
-    
-        super().__init__(ElasticNet(n_lambda=n_alphas, n_splits=n_splits, alpha = l1_ratio,standardize = standardize, n_jobs=-1, **kwargs), 
-                        cv,inv_link_fn=lambda a: a, l_dot=lambda a, b: b - a, l1_ratio=l1_ratio,
-                        l_doubledot=lambda a, b: 1, r_doubledot=lambda a: 1 * (1 - l1_ratio),
+        super().__init__(ElasticNet(n_lambda=n_alphas,standardize=standardize,n_splits=n_splits,alpha=l1_ratio,**kwargs), standardize= standardize,
+                        cv = cv,inv_link_fn=lambda a: a, l_dot=lambda a, b: b - a, l1_ratio=l1_ratio,
+                        l_doubledot=lambda a, b: 1, r_doubledot=lambda a: 1 - l1_ratio,
                         hyperparameter_scorer=mean_squared_error)
-
-    
-
+        
 class GlmNetRidgeRegressorPPM(GlmNetRegressorPPM):
     """
-    Ppm class for regression that uses ridge as the GLM estimator.
+    PPM class for Elastic
     """
-    def __init__(self, cv="loo", n_alphas=100, standardize = False, **kwargs):
+
+    def __init__(self, cv="loo", n_alphas=100, l1_ratio = 0.0,standardize = False, **kwargs):
         if cv == "loo":
             n_splits = 0
         else:
             n_splits = cv
-        super().__init__(ElasticNet(n_lambda=n_alphas, n_splits=n_splits, alpha = 0.0,standardize = standardize, **kwargs), 
-                        cv = cv,inv_link_fn=lambda a: a, l_dot=lambda a, b: b - a,l1_ratio = 0.0,
+        
+        lambda_path = np.logspace(-5,5,100)
+        
+        super().__init__(ElasticNet(n_lambda=n_alphas,standardize=standardize,n_splits=n_splits,alpha=0.0,**kwargs), cv = cv,
+                        inv_link_fn=lambda a: a, l_dot=lambda a, b: b - a, l1_ratio=l1_ratio,
                         l_doubledot=lambda a, b: 1, r_doubledot=lambda a: 1,
                         hyperparameter_scorer=mean_squared_error)
-        
+
 
 class GlmNetLassoRegressorPPM(GlmNetRegressorPPM):
     """
@@ -213,8 +224,35 @@ class GlmNetLassoRegressorPPM(GlmNetRegressorPPM):
                         hyperparameter_scorer=mean_squared_error)
     
 
-
-
+class SklearnRidgeRegressorPPM(GlmNetRegressorPPM):
+    """
+    Ppm class for regression that uses ridge as the GLM estimator.
+    Uses fast scikit-learn LOO implementation
+    """
+    def __init__(self, cv="loo", n_alphas=100, standardize = False, **kwargs):
+        if cv == "loo":
+            n_splits = None
+        else:
+            n_splits = cv
+        alpha_grid = np.logspace(-5, 5, 100)
+        self.estimator = RidgeCV(alphas =alpha_grid, cv = n_splits, **kwargs)
+        self.inv_link_fn = lambda a: a
+        self.l_dot = lambda a, b: b - a
+        self.l_doubledot = lambda a, b: 1
+        self.r_doubledot = lambda a: 1
+    
+    def _fit_model(self, X, y):
+        y_train = copy.deepcopy(y)
+        sample_weight = np.ones_like(y_train)/(2 * len(y_train)) #for consistency with glmnet
+        
+        self.estimator.fit(X, y_train,sample_weight = sample_weight)
+        self.coefficients_ = np.hstack([self.estimator.coef_, self.estimator.intercept_])
+        self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
+        self.alpha_ = self.estimator.alpha_
+        self.loo_coefficients_,self.influence_matrix_ = _get_loo_coefficients(X, y_train,orig_coef_ = self.coefficients_,alpha = self.alpha_,inv_link_fn = self.inv_link_fn,
+                                                       l_doubledot = self.l_doubledot,r_doubledot = self.r_doubledot, l_dot = self.l_dot)
+        
+        
 
 if __name__ == "__main__":
     from sklearn.datasets import make_regression
@@ -248,6 +286,73 @@ if __name__ == "__main__":
 
 
 
+
+            #Diag_ = 1.0/(evals + reg_curvature)
+            #evecs_Diag = Diag_ * evecs
+            #normal_eqn_mat = evecs_Diag @ X1_support.T
+
+            #h_vals = np.sum(X1_support.T * normal_eqn_mat, axis=0) * l_doubled
+
+    # def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-5):
+    #     #Assume we are solving 1/n l_i + lambda * r
+       
+    #     all_support_idxs = {}
+    #     X1 = np.hstack([X, np.ones((X.shape[0], 1))])
+    #     n = X1.shape[0]
+    #     best_lambda_ = -1
+    #     best_cv_ = np.inf
+    #     best_loo_coefs = None
+    #     best_influence_matrix = None
+        
+    #     #get min of self.estimator.lambda_path
+    #     min_lambda_ = np.min(self.estimator.lambda_path_)
+
+    #     for i,lambda_ in enumerate(self.estimator.lambda_path_):
+    #         orig_coef_ = self._augmented_coeffs_for_each_alpha[lambda_]
+    #         support_idxs_lambda_ = orig_coef_ != 0
+    #         X1_support = X1[:, support_idxs_lambda_]
+    #         if tuple(support_idxs_lambda_) not in all_support_idxs:
+    #             evals, evecs = np.linalg.eigh(X1_support.T @ X1_support)
+    #             all_support_idxs[tuple(support_idxs_lambda_)] = evals, evecs
+    #         else:
+    #             evals, evecs = all_support_idxs[tuple(support_idxs_lambda_)]
+    #         orig_preds = _get_preds(X, orig_coef_, self.inv_link_fn)
+    #         l_doubledot_vals = self.l_doubledot(y, orig_preds)/n 
+    #         orig_coef_ = orig_coef_[np.array(support_idxs_lambda_)]
+    #         if self.r_doubledot is not None:
+    #             r_doubledot_vals = self.r_doubledot(orig_coef_) * np.ones_like(orig_coef_)
+    #             #r_doubledot_vals[-1] = 0
+    #             reg_curvature =  lambda_ * r_doubledot_vals
+    #         else: 
+    #             r_doubledot_vals = self.r_doubledot(orig_coef_) * np.ones_like(orig_coef_) 
+    #             #r_doubledot_vals[-1] = 0
+    #             reg_curvature =  min_lambda_ * r_doubledot_vals
+
+    #         Diag_ = 1.0/(evals + reg_curvature)
+    #         evecs_Diag = Diag_ * evecs
+    #         normal_eqn_mat = evecs_Diag @ X1_support.T
+
+    #         h_vals = np.sum(X1_support.T * normal_eqn_mat, axis=0) * l_doubledot_vals
+    #         h_vals[h_vals == 1] = max_h
+    #         l_dot_vals = self.l_dot(y, orig_preds) / n
+    #         influence_matrix = normal_eqn_mat * l_dot_vals / (1 - h_vals)
+    #         loo_coef_ = orig_coef_[:, np.newaxis] + influence_matrix 
+    #         if not all(support_idxs_lambda_):
+    #             loo_coef_dense_ = np.zeros((X1.shape[1], X.shape[0]))
+    #             loo_coef_dense_[support_idxs_lambda_, :] = loo_coef_
+    #             loo_coef_ = loo_coef_dense_
+    #         sample_preds =  self.inv_link_fn(np.sum(loo_coef_.T * X1, axis=1))
+    #         sample_scores = self.hyperparameter_scorer(y, sample_preds)
+    #         if sample_scores < best_cv_:
+    #             best_cv_ = sample_scores
+    #             best_lambda_ = lambda_
+    #             best_loo_coefs = loo_coef_
+    #             best_influence_matrix = influence_matrix
+        
+    #     self.alpha_ = best_lambda_
+    #     self.loo_coefficients_ = best_loo_coefs
+    #     self.influence_matrix_ = best_influence_matrix
+    
 
 
 

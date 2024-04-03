@@ -6,10 +6,14 @@ import copy
 from abc import ABC, abstractmethod
 import warnings
 from functools import partial
-
+from sklearn.metrics import r2_score
 
 from scipy.sparse.linalg import cg
 from krylov import cg as krylov_cg
+
+def neg_r2_score(y_true, y_pred):
+    return -1 * r2_score(y_true, y_pred)
+
 
 
 def _extract_coef_and_intercept(estimator):
@@ -154,3 +158,41 @@ def count_sketch_inverse(A, B, num_sketches=10):
     AB_approx = np.median(S, axis=0)
 
     return AB_approx
+
+def _get_loo_coefficients(X, y, orig_coef_,alpha,inv_link_fn,l_doubledot,r_doubledot, l_dot,max_h=1-1e-4):
+        """
+        Get the coefficient (and intercept) for each LOO model. Since we fit
+        one model for each sample, this gives an ndarray of shape (n_samples,
+        n_features + 1)
+        """
+
+        X1 = np.hstack([X, np.ones((X.shape[0], 1))])
+        n = X.shape[0]
+        orig_preds = _get_preds(X, orig_coef_, inv_link_fn)
+        support_idxs = orig_coef_ != 0
+        if not any(support_idxs):
+            return orig_coef_ * np.ones_like(X1)
+        X1 = X1[:, support_idxs]
+        orig_coef_ = orig_coef_[support_idxs]
+        l_doubledot_vals = l_doubledot(y, orig_preds)/n
+        J = X1.T * l_doubledot_vals @ X1
+        if r_doubledot is not None:
+            r_doubledot_vals = r_doubledot(orig_coef_) * np.ones_like(orig_coef_)
+            r_doubledot_vals[-1] = 0 # Do not penalize constant term
+            reg_curvature = np.diag(r_doubledot_vals)
+            J += alpha * reg_curvature
+        
+        normal_eqn_mat = np.linalg.inv(J) @ X1.T
+        
+        h_vals = np.sum(X1.T * normal_eqn_mat, axis=0) * l_doubledot_vals/n
+        h_vals[h_vals == 1] = max_h
+        l_dot_vals = l_dot(y, orig_preds)/n
+        influence_matrix = normal_eqn_mat * l_dot_vals / (1 - h_vals)
+
+        loo_coef_ = orig_coef_[:, np.newaxis] + influence_matrix
+
+        if not all(support_idxs):
+            loo_coef_dense_ = np.zeros((X.shape[1] + 1, X.shape[0]))
+            loo_coef_dense_[support_idxs, :] = loo_coef_
+            loo_coef_ = loo_coef_dense_
+        return loo_coef_.T,influence_matrix

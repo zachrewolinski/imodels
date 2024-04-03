@@ -5,7 +5,7 @@ from functools import partial
 import numpy as np
 import scipy as sp
 import pandas as pd
-import time
+import time, numbers
 from sklearn.linear_model import RidgeCV, Ridge, LogisticRegression, HuberRegressor, Lasso
 from sklearn.metrics import log_loss, mean_squared_error, r2_score, roc_auc_score, log_loss
 from scipy.special import softmax
@@ -18,7 +18,7 @@ from sklearn.linear_model import Ridge
 
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, _GlmPPM
 
-from imodels.tree.rf_plus.ppms.ppms_util import _extract_coef_and_intercept, _get_preds, fast_hessian_vector_inverse, count_sketch_inverse
+from imodels.tree.rf_plus.ppms.ppms_util import _extract_coef_and_intercept, _get_preds, fast_hessian_vector_inverse, count_sketch_inverse, _get_loo_coefficients
 from scipy.sparse.linalg import spsolve,cg
 from scipy.linalg import solve
 from sklearn import random_projection
@@ -91,69 +91,66 @@ class GlmClassifierPPM(PartialPredictionModelBase, ABC):
             self.coefficients_ = self._augmented_coeffs_for_each_alpha[self.alpha_]
             self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
 
-    # Not sure if sample weights make sense during leave one out cross validation. 
-    def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-4):
-        
+    def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-5):
+        #Assume we are solving 1/n l_i + lambda * r
+       
         all_support_idxs = {}
         X1 = np.hstack([X, np.ones((X.shape[0], 1))])
-        cv_scores = []
+        n = X1.shape[0]
         best_lambda_ = -1
         best_cv_ = np.inf
-        best_loo_coefs = None
-        best_influence_matrix = None
+ 
+        #get min of self.estimator.lambda_path
         min_lambda_ = np.min(self.estimator.lambda_path_)
-
-        #self.sample_weights = np.ones(y.shape[0])
 
         for i,lambda_ in enumerate(self.estimator.lambda_path_):
             orig_coef_ = self._augmented_coeffs_for_each_alpha[lambda_]
             support_idxs_lambda_ = orig_coef_ != 0
             X1_support = X1[:, support_idxs_lambda_]
+            
             if tuple(support_idxs_lambda_) not in all_support_idxs:
-                evals, evecs = np.linalg.eigh(X1_support.T @ X1_support)
-                all_support_idxs[tuple(support_idxs_lambda_)] = evals, evecs
+                u,s,vh =  linalg.svd(X1_support,full_matrices=False)  
+                us = u * s
+                ush = us.T
+                all_support_idxs[tuple(support_idxs_lambda_)] = s,us,ush
             else:
-                evals, evecs = all_support_idxs[tuple(support_idxs_lambda_)]
+                s,us,ush = all_support_idxs[tuple(support_idxs_lambda_)]
+            
             orig_preds = _get_preds(X, orig_coef_, self.inv_link_fn)
-            l_doubledot_vals = self.l_doubledot(y, orig_preds) #* self.sample_weights
+            l_doubledot_vals = self.l_doubledot(y, orig_preds)/n 
             orig_coef_ = orig_coef_[np.array(support_idxs_lambda_)]
+            
             if self.r_doubledot is not None:
                 r_doubledot_vals = self.r_doubledot(orig_coef_) * np.ones_like(orig_coef_)
                 r_doubledot_vals[-1] = 0
-                reg_curvature = lambda_ * r_doubledot_vals
-            else:  
-                reg_curvature = min_lambda_ * np.ones_like(orig_coef_)
-            Diag_ = 1.0/(evals + reg_curvature)
-            evecs_Diag = Diag_ * evecs
-            normal_eqn_mat = evecs_Diag @ X1_support.T
+                reg_curvature =  lambda_ * r_doubledot_vals
+            else: 
+                r_doubledot_vals = self.r_doubledot(orig_coef_) * np.ones_like(orig_coef_) 
+                r_doubledot_vals[-1] = 0
+                reg_curvature =  min_lambda_ * r_doubledot_vals
+            
+            if l_doubledot_vals is isinstance(l_doubledot_vals, numbers.Number):
+                diag_elements = s * l_doubledot_vals * s
+            else:
+                diag_elements = s * l_doubledot_vals[:len(s)] * s
 
-            h_vals = np.sum(X1_support.T * normal_eqn_mat, axis=0) * l_doubledot_vals 
+            Sigma2_plus_lambda = diag_elements + reg_curvature
+            Sigma2_plus_lambda_inverse = 1.0/(Sigma2_plus_lambda)
+            
+            h_vals = np.einsum('ij,j,jk->i', us,Sigma2_plus_lambda_inverse,ush,optimize=True) * l_doubledot_vals
             h_vals[h_vals == 1] = max_h
-            l_dot_vals = self.l_dot(y, orig_preds) #* self.sample_weights
-            influence_matrix = normal_eqn_mat * l_dot_vals / (1 - h_vals)
-            loo_coef_ = orig_coef_[:, np.newaxis] + influence_matrix 
-            if not all(support_idxs_lambda_):
-                loo_coef_dense_ = np.zeros((X1.shape[1], X.shape[0]))
-                loo_coef_dense_[support_idxs_lambda_, :] = loo_coef_
-                loo_coef_ = loo_coef_dense_
-            
-            sample_preds =  self.inv_link_fn(np.sum(loo_coef_.T * X1, axis=1))
-            sample_scores = self.hyperparameter_scorer(y, sample_preds)#,sample_weight=self.sample_weights)
-            
+            l_dot_vals = self.l_dot(y, orig_preds) / n
+            loo_preds = orig_preds + h_vals * l_dot_vals / (1 - h_vals)
+            sample_scores = self.hyperparameter_scorer(y, loo_preds)
             if sample_scores < best_cv_:
                 best_cv_ = sample_scores
                 best_lambda_ = lambda_
-                best_loo_coefs = loo_coef_
-                best_influence_matrix = influence_matrix
-        
-        self.alpha_ = best_lambda_
-        self.loo_coefficients_ = best_loo_coefs
-        self.influence_matrix_ = best_influence_matrix
 
-        #self.alpha_ = best_lambda_
-        #self.loo_coefficients_ = best_loo_coefs
-        #self.influence_matrix_ = best_influence_matrix
-    
+        self.alpha_ = best_lambda_
+        self.loo_coefficients_,self.influence_matrix_ = _get_loo_coefficients(X, y,self._augmented_coeffs_for_each_alpha[self.alpha_],self.alpha_,
+                                                                              self.inv_link_fn,self.l_doubledot,self.r_doubledot, self.l_dot)
+        
+
        
     def predict_proba(self, X):
         preds = self.predict(X)
@@ -243,7 +240,7 @@ class GLMLogisticRidgeNetPPM(GlmClassifierPPM):
     PPM class for Logistic Regression with Lasso Penalty
     """
 
-    def __init__(self, cv="loo", n_alphas=100, standardize = False, sample_weights = 'balanced',**kwargs):
+    def __init__(self, cv="loo", n_alphas=100, standardize = False, sample_weights = None,**kwargs): #'balanced'
         if cv == "loo":
             n_splits = 0
         else:
@@ -289,7 +286,69 @@ if __name__ == "__main__":
     model.fit(X_train, y_train)
 
 
+# # Not sure if sample weights make sense during leave one out cross validation. 
+#     def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-4):
+        
+#         all_support_idxs = {}
+#         X1 = np.hstack([X, np.ones((X.shape[0], 1))])
+#         cv_scores = []
+#         best_lambda_ = -1
+#         best_cv_ = np.inf
+#         best_loo_coefs = None
+#         best_influence_matrix = None
+#         min_lambda_ = np.min(self.estimator.lambda_path_)
 
+#         #self.sample_weights = np.ones(y.shape[0])
+
+#         for i,lambda_ in enumerate(self.estimator.lambda_path_):
+#             orig_coef_ = self._augmented_coeffs_for_each_alpha[lambda_]
+#             support_idxs_lambda_ = orig_coef_ != 0
+#             X1_support = X1[:, support_idxs_lambda_]
+#             if tuple(support_idxs_lambda_) not in all_support_idxs:
+#                 evals, evecs = np.linalg.eigh(X1_support.T @ X1_support)
+#                 all_support_idxs[tuple(support_idxs_lambda_)] = evals, evecs
+#             else:
+#                 evals, evecs = all_support_idxs[tuple(support_idxs_lambda_)]
+#             orig_preds = _get_preds(X, orig_coef_, self.inv_link_fn)
+#             l_doubledot_vals = self.l_doubledot(y, orig_preds) #* self.sample_weights
+#             orig_coef_ = orig_coef_[np.array(support_idxs_lambda_)]
+#             if self.r_doubledot is not None:
+#                 r_doubledot_vals = self.r_doubledot(orig_coef_) * np.ones_like(orig_coef_)
+#                 r_doubledot_vals[-1] = 0
+#                 reg_curvature = lambda_ * r_doubledot_vals
+#             else:  
+#                 reg_curvature = min_lambda_ * np.ones_like(orig_coef_)
+#             Diag_ = 1.0/(evals + reg_curvature)
+#             evecs_Diag = Diag_ * evecs
+#             normal_eqn_mat = evecs_Diag @ X1_support.T
+
+#             h_vals = np.sum(X1_support.T * normal_eqn_mat, axis=0) * l_doubledot_vals 
+#             h_vals[h_vals == 1] = max_h
+#             l_dot_vals = self.l_dot(y, orig_preds) #* self.sample_weights
+#             influence_matrix = normal_eqn_mat * l_dot_vals / (1 - h_vals)
+#             loo_coef_ = orig_coef_[:, np.newaxis] + influence_matrix 
+#             if not all(support_idxs_lambda_):
+#                 loo_coef_dense_ = np.zeros((X1.shape[1], X.shape[0]))
+#                 loo_coef_dense_[support_idxs_lambda_, :] = loo_coef_
+#                 loo_coef_ = loo_coef_dense_
+            
+#             sample_preds =  self.inv_link_fn(np.sum(loo_coef_.T * X1, axis=1))
+#             sample_scores = self.hyperparameter_scorer(y, sample_preds)#,sample_weight=self.sample_weights)
+            
+#             if sample_scores < best_cv_:
+#                 best_cv_ = sample_scores
+#                 best_lambda_ = lambda_
+#                 best_loo_coefs = loo_coef_
+#                 best_influence_matrix = influence_matrix
+        
+#         self.alpha_ = best_lambda_
+#         self.loo_coefficients_ = best_loo_coefs
+#         self.influence_matrix_ = best_influence_matrix
+
+#         #self.alpha_ = best_lambda_
+#         #self.loo_coefficients_ = best_loo_coefs
+#         #self.influence_matrix_ = best_influence_matrix
+    
 
 
 

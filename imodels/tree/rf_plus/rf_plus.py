@@ -5,7 +5,7 @@ from joblib import Parallel, delayed
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
-from sklearn.metrics import r2_score, roc_auc_score, log_loss, f1_score, average_precision_score, accuracy_score
+from sklearn.metrics import r2_score, roc_auc_score, log_loss, f1_score, average_precision_score, accuracy_score, mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.preprocessing import OneHotEncoder
 from tqdm import tqdm
@@ -15,7 +15,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression, LogisticRegressionCV
 from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
 from imodels.tree.rf_plus.ppms.ppms import PartialPredictionModelBase, GlmClassifierPPM, RidgeRegressorPPM, LogisticClassifierPPM
-from imodels.tree.rf_plus.ppms.ppms_regression import GlmNetElasticNetRegressorPPM, GlmNetRidgeRegressorPPM, GlmNetLassoRegressorPPM
+from imodels.tree.rf_plus.ppms.ppms_regression import GlmNetElasticNetRegressorPPM, GlmNetRidgeRegressorPPM, GlmNetLassoRegressorPPM, SklearnRidgeRegressorPPM  
 from imodels.tree.rf_plus.ppms.ppms_classification import GlmClassifierPPM, GLMLogisticElasticNetPPM, GLMLogisticRidgeNetPPM, GLMLogisticLassoNetPPM, SVCRidgePPM
 from imodels.tree.rf_plus.mdi_plus import ForestMDIPlus
 from imodels.tree.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _get_kernel_shap_rf_plus, _get_lime_scores_rf_plus, _check_X, _check_Xy, _tensorize_data, _tensorize_data_by_tree, _get_sample_split_data
@@ -545,45 +545,51 @@ if __name__ == "__main__":
     # Suppress specific warning
     # warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
     
-    # X, y,f = imodels.get_clean_dataset("287",data_source="openml")
-    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.8, random_state=1)
+    # X, y,f = imodels.get_clean_dataset("california_housing")
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33, random_state=3)
 
     # pprint.pprint(f"Shape: {X_train.shape}")
 
-    # rf = RandomForestRegressor(n_estimators=16,min_samples_leaf=5,max_features="sqrt",random_state=1)
+    # rf = RandomForestRegressor(n_estimators=8,min_samples_leaf=5,max_features=0.33,random_state=1)
     # rf.fit(X_train, y_train)
     
-    # rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf))
-    # rf_plus.fit(X_train, y_train,n_jobs=min(rf.n_estimators,8))
+    # # rf_plus = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf),prediction_model=GlmNetRidgeRegressorPPM()) #SklearnRidgeRegressorPPM()
+    # # rf_plus.fit(X_train, y_train,n_jobs=min(rf.n_estimators,8))
 
-    # gbr = GradientBoostingRegressor()
+    # rf_plus_sklearn = RandomForestPlusRegressor(rf_model=copy.deepcopy(rf),prediction_model=SklearnRidgeRegressorPPM())
+    # rf_plus_sklearn.fit(X_train, y_train,n_jobs=min(rf.n_estimators,8))
+
+    # gbr = GradientBoostingRegressor(n_estimators=40)
     # gbr.fit(X_train, y_train)
 
     # xgbr = XGBRegressor()
     # xgbr.fit(X_train, y_train)
 
-    # pprint.pprint(f"RF r2_score: {r2_score(y_test,rf.predict(X_test))}")
+    # pprint.pprint(f"RF mean_squared_error: {mean_squared_error(y_test,rf.predict(X_test))}")
 
-    # pprint.pprint(f"RF+ r2_score: {r2_score(y_test,rf_plus.predict(X_test))}")
+    # #pprint.pprint(f"RF+ mean_squared_error: {mean_squared_error(y_test,rf_plus.predict(X_test))}")
 
-    # pprint.pprint(f"GBC r2_score: {r2_score(y_test,gbr.predict(X_test))}")
+    # pprint.pprint(f"RF+ Sklearn mean_squared_error: {mean_squared_error(y_test,rf_plus_sklearn.predict(X_test))}")
 
-    # pprint.pprint(f"XGB r2_score: {r2_score(y_test,xgbr.predict(X_test))}")
+
+    # pprint.pprint(f"GBC mean_squared_error: {mean_squared_error(y_test,gbr.predict(X_test))}")
+
+    # pprint.pprint(f"XGB mean_squared_error: {mean_squared_error(y_test,xgbr.predict(X_test))}")
 
     
     
-    X, y,f = imodels.get_clean_dataset("fico")
+    X, y,f = imodels.get_clean_dataset("compas_two_year_clean")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.8)
     
-    rf = RandomForestClassifier(n_estimators=2,min_samples_leaf=1,max_features="sqrt",class_weight="balanced")
+    rf = RandomForestClassifier(n_estimators=16,min_samples_leaf=1,max_features="sqrt",class_weight="balanced")
     rf.fit(X_train, y_train)
 
     print(X_train.shape)
     rf_plus = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf))
-    rf_plus.fit(X_train, y_train,n_jobs=1)
+    rf_plus.fit(X_train, y_train,n_jobs=-1)
 
     rf_plus_svm = RandomForestPlusClassifier(rf_model=copy.deepcopy(rf),prediction_model=SVCRidgePPM())
-    rf_plus_svm.fit(X_train, y_train,n_jobs=1)
+    rf_plus_svm.fit(X_train, y_train,n_jobs=-1)
 
     n_pos = np.sum(y_train)
     n_neg = len(y_train) - n_pos
