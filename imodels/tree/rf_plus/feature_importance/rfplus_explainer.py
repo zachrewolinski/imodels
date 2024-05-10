@@ -26,16 +26,16 @@ from imodels.tree.rf_plus.rf_plus.rf_plus_models import RandomForestPlusRegresso
 import shap,lime
 
 
-def per_sample_log_loss(y_true,y_pred,epsilon = 1e-4):
+def per_sample_neg_log_loss(y_true,y_pred,epsilon = 1e-4):
 
     y_pred = np.clip(y_pred, epsilon, 1 - epsilon)
     y_true = y_true.reshape(-1,1)
     log_loss_values = -y_true * np.log(y_pred) - (1 - y_true) * np.log(1 - y_pred)
-    return log_loss_values
+    return -1*log_loss_values
 
-def per_sample_mean_absolute_error(y_true,y_pred):
+def per_sample_neg_mean_absolute_error(y_true,y_pred):
     y_true = y_true.reshape(-1,1)   
-    return np.abs(y_true - y_pred)
+    return -1*np.abs(y_true - y_pred)
 
 class _RandomForestPlusExplainer():
 
@@ -44,6 +44,20 @@ class _RandomForestPlusExplainer():
     
     def explain(self, X):
         pass 
+
+    def get_rankings(self,scores,feature_names = None,ascending = True):
+        """
+        Takes in a matrix of scores and returns rankings of columns per row. 
+        Ascending: higher scores are better. 
+        """
+        if ascending:
+            rankings = np.argsort(-scores, axis=1)
+        else:
+            rankings = np.argsort(scores, axis=1)
+        if feature_names is None:
+            return rankings
+        else:
+            return pd.DataFrame(rankings, columns = feature_names)
 
 class RFPlusKernelSHAP(_RandomForestPlusExplainer):
 
@@ -135,11 +149,11 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         if self.rf_plus_model._task == "classification":
             self.tree_explainers = [MDIPlusGenericClassifierPPM(rf_plus_model.estimators_[i]) 
                                     for i in range(len(rf_plus_model.estimators_))]
-            self.metrics = per_sample_log_loss
+            self.metrics = per_sample_neg_log_loss
         else:
             self.tree_explainers = [MDIPlusGenericRegressorPPM(rf_plus_model.estimators_[i]) 
                                     for i in range(len(rf_plus_model.estimators_))]
-            self.metrics = per_sample_mean_absolute_error
+            self.metrics = per_sample_neg_mean_absolute_error
         
 
     def explain(self, X,y = None):
@@ -197,11 +211,11 @@ class AloRFPlusMDI(RFPlusMDI): #No leave one out
         if self.rf_plus_model._task == "classification":
             self.tree_explainers = [AloMDIPlusPartialPredictionModelClassifier(rf_plus_model.estimators_[i]) 
                                     for i in range(len(rf_plus_model.estimators_))]
-            self.metrics = per_sample_log_loss
+            self.metrics = per_sample_neg_log_loss
         else:
             self.tree_explainers = [AloMDIPlusPartialPredictionModelRegressor(rf_plus_model.estimators_[i]) 
                                     for i in range(len(rf_plus_model.estimators_))]
-            self.metrics = per_sample_mean_absolute_error
+            self.metrics = per_sample_neg_mean_absolute_error
         
     def explain(self, X,y = None):
         return super().explain(X,y)
@@ -236,7 +250,7 @@ if __name__ == "__main__":
     #Test Regression
 
     # Load data
-    X, y, f = imodels.get_clean_dataset("enhancer")
+    X, y, f = imodels.get_clean_dataset("california_housing")
     pprint.pprint(f"X Shape: {X.shape}")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
@@ -249,17 +263,18 @@ if __name__ == "__main__":
     pprint.pprint("Fitted RFPlus Model")
 
     #Test MDI
-    rf_plus_mdi = RFPlusMDI(rf_plus_model)
-    local_feature_importances = rf_plus_mdi.explain(X_train[:100],y_train[:100])
+    rf_plus_mdi = AloRFPlusMDI(rf_plus_model)
+    local_feature_importances = rf_plus_mdi.explain(X_test[:40])
+    pprint.pprint(rf_plus_mdi.get_rankings(local_feature_importances,f))
+
     #print(f"LFIs have shape: {local_feature_importances.shape}") #Should have shape 50, X.shape[1], num trees
     
 
-    # # Run RFPlusKernelSHAP and RFPlusLime
-    # pprint.pprint("Running RFPlusKernelSHAP")
-    # rf_plus_kernel_shap = RFPlusKernelSHAP(rf_plus_model)
-    # shap_values = rf_plus_kernel_shap.explain(X_train, X_test[:40])
-    # pprint.pprint(shap_values.shape)
-    # pprint.pprint("RFPlusKernelSHAP done")  
+    # Run RFPlusKernelSHAP and RFPlusLime
+    pprint.pprint("Running RFPlusKernelSHAP")
+    rf_plus_kernel_shap = RFPlusKernelSHAP(rf_plus_model)
+    shap_values = rf_plus_kernel_shap.explain(X_train, X_test[:40])
+    pprint.pprint(rf_plus_kernel_shap.get_rankings(shap_values,f))
 
     # pprint.pprint("Running RFPlusLime")
     # rf_plus_lime = RFPlusLime(rf_plus_model)
