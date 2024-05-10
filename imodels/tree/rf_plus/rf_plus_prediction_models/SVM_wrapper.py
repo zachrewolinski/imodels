@@ -22,11 +22,13 @@ class CustomSVMClassifier(LinearSVC):
     PPM Wrapper for SVM Classifier so that it is compataible with the PPM framework
     Only binary for now. 
     '''
-    def __init__(self,n_alphas = 50,penalty="l2",loss="squared_hinge",*,dual="warn",tol=1e-4,multi_class="ovr",
+    def __init__(self,n_alphas = 50,penalty="l2",loss="squared_hinge",*,dual="auto",tol=1e-4,multi_class="ovr",
         fit_intercept=True,intercept_scaling=1,class_weight='balanced',verbose=0,random_state=None,max_iter=1000):
+        
         # initialize super class
         if loss != "squared_hinge":
             raise ValueError("Different losses currently not supported. Please use loss='squared_hinge'")
+        
         self.n_alphas = n_alphas
         self.penalty = penalty
         self.loss = loss
@@ -60,7 +62,6 @@ class CustomSVMClassifier(LinearSVC):
         self.intercept_path_ = np.zeros((1,self.n_alphas))
         for i,lambda_ in enumerate(self.lambda_path_):
             self.estimator.set_params(C=1/lambda_)
-            print(self.estimator.dual)
             self.estimator.fit(X, y,sample_weight=sample_weight)
             self.coef_path_[0,:,i] = self.estimator.coef_[0,:]
             self.intercept_path_[0,i] = self.estimator.intercept_[0]
@@ -70,7 +71,59 @@ class CustomSVMClassifier(LinearSVC):
         self.intercept_ = self.estimator.intercept_
         self.classes_ = self.estimator.classes_
 
+
+
+class CustomSVMRegressor(LinearSVR):
+    '''
+    PPM Wrapper for SVM Classifier so that it is compataible with the PPM framework
+    Only binary for now. 
+    '''
+    def __init__(self,n_alphas = 50,penalty="l2",loss="epsilon_insensitive",*,dual="auto",tol=1e-4,
+        fit_intercept=True,intercept_scaling=1,verbose=0,random_state=None,max_iter=1000):
         
+        # initialize super class
+        if loss != "epsilon_insensitive":
+            raise ValueError("Different losses currently not supported. Please use loss='squared_hinge'")
+        
+        self.n_alphas = n_alphas
+        self.penalty = penalty
+        self.loss = loss
+        self.dual = dual
+        self.tol = tol
+        self.fit_intercept = fit_intercept
+        self.intercept_scaling = intercept_scaling
+        self.verbose = verbose
+        self.random_state = random_state
+        self.max_iter = max_iter
+        self.fitted_ = False
+        if self.penalty == "l1":
+            self.l1_ratio = 1
+        elif self.penalty == "l2":
+            self.l1_ratio = 0
+        else:
+            raise ValueError("penalty must be either l1 or l2")
+
+        self.estimator = LinearSVR(penalty=penalty, loss=loss, dual=dual, tol=tol,fit_intercept=fit_intercept, intercept_scaling=intercept_scaling,
+                                    verbose=verbose, random_state=random_state, max_iter=max_iter)
+        
+        self.lambda_path_ = np.logspace(-4, 3, self.n_alphas)
+        self.coef_path_ = None
+        self.intercept_path_ = None
+        
+    def fit(self, X, y,sample_weight=None):
+        self.coef_path_ = np.zeros((1,X.shape[1],self.n_alphas))
+        self.intercept_path_ = np.zeros((1,self.n_alphas))
+        for i,lambda_ in enumerate(self.lambda_path_):
+            self.estimator.set_params(C=1/lambda_)
+            self.estimator.fit(X, y,sample_weight=sample_weight)
+            self.coef_path_[0,:,i] = self.estimator.coef_[0,:]
+            self.intercept_path_[0,i] = self.estimator.intercept_[0]
+        
+        self.fitted_ = True
+        self.coef_ = self.estimator.coef_
+        self.intercept_ = self.estimator.intercept_
+        self.classes_ = self.estimator.classes_
+
     
 
 def derivative_squared_hinge_loss(y, preds):

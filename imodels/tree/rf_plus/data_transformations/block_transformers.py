@@ -372,8 +372,10 @@ class BlockTransformerBase(ABC):
         n_features = X.shape[1]
         data_blocks = [self.fit_transform_one_feature(X, k, center, normalize) for
                        k in range(n_features)]
+        transformed_dim = sum([data_block.shape[1] for data_block in data_blocks])
         blocked_data = BlockPartitionedData(data_blocks)
         self.is_fitted = True
+        self.transformed_dim = transformed_dim
         return blocked_data
 
     @abstractmethod
