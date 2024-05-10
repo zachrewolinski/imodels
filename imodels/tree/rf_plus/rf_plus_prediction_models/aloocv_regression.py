@@ -64,7 +64,7 @@ class AloElasticNetRegressorCV(AloGLMRegressor):
         self.random_state = None
         self.n_splits = n_splits
 
-    def fit(self, X, y,evaluate_on = None,sample_weight = None):
+    def fit(self, X, y,sample_weight = None):
 
         best_cv_scores = np.inf
 
@@ -73,7 +73,7 @@ class AloElasticNetRegressorCV(AloGLMRegressor):
                         alpha=l1_ratio,n_jobs=-1), standardize= self.standardize,inv_link_fn= lambda a: a, n_splits=self.n_splits,
                         l_dot= lambda a, b: b - a, l1_ratio=l1_ratio,l_doubledot= lambda a, b: 1, r_doubledot=lambda a: 1.0 - l1_ratio, 
                         hyperparameter_scorer= self.hyperparameter_scorer)
-            model.fit(X,y,evaluate_on,sample_weight = sample_weight)
+            model.fit(X,y,sample_weight = sample_weight)
             
             if model.cv_scores < best_cv_scores:
                 best_cv_scores = model.cv_scores

@@ -61,12 +61,11 @@ class AloGLM():
         self.standardize = standardize
         self._svd = None
         self.bootstrap = bootstrap
-        self.evaluate_on = "all"
         self.random_state = random_state    
         self.n_splits = n_splits
        
 
-    def fit(self, X, y,evaluate_on = None,sample_weight = None,max_h = 1 - 1e-5):
+    def fit(self, X, y,sample_weight = None,max_h = 1 - 1e-5):
         y_train = copy.deepcopy(y)
         self.sample_weight = sample_weight  
 
@@ -85,12 +84,11 @@ class AloGLM():
             
         #self._get_aloocv_alpha(X, y_train,evaluate_on,max_h)  
         if self.n_splits == 0:
-            self._get_aloocv_alpha(X, y_train,evaluate_on,max_h)  
+            self._get_aloocv_alpha(X, y_train,max_h)  
         else:
             self.alpha_ = self.estimator.lambda_max_
             alpha_index = np.where(self.estimator.lambda_path_ == self.alpha_)
             self.cv_scores = self.estimator.cv_mean_score_[alpha_index]
-            #self._get_aloocv_alpha(X, y_train,evaluate_on,max_h)
             
 
         self.coefficients_ = self._coeffs_for_each_alpha[self.alpha_]
@@ -99,7 +97,7 @@ class AloGLM():
         self.loo_coefficients_,self.influence_matrix_ = self._get_loo_coefficients(X, y_train) #contains intercept
         self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
          
-    def _get_aloocv_alpha(self, X, y,evaluate_on,max_h = 1 - 1e-5):
+    def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-5):
         #Assume we are solving 1/n l_i + lambda * r
        
         all_support_idxs = {}
@@ -145,10 +143,6 @@ class AloGLM():
             l_dot_vals = (self.l_dot(y, orig_preds) * sample_weight)/ n         
             loo_preds = orig_preds + h_vals * l_dot_vals / (1 - h_vals)
 
-
-
-            if evaluate_on is None:
-                evaluate_on = np.arange(len(y))
             
             sample_scores = self.hyperparameter_scorer(y, loo_preds)
 

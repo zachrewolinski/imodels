@@ -59,7 +59,6 @@ class AloGLMClassifier(AloGLM):
         self.standardize = standardize
         self._svd = None
         self.class_weight = class_weight
-        self.evaluate_on = "all"
         self.n_splits = n_splits
 
     def fit(self, X, y,sample_weight = None,max_h = 1 - 1e-5):
@@ -95,7 +94,7 @@ class AloGLMClassifier(AloGLM):
 
         #fit the model on the training set and compute the coefficients
         if self.n_splits > 0:
-            self._get_aloocv_alpha(X, y_train,self.evaluate_on,max_h)
+            self._get_aloocv_alpha(X, y_train,max_h)
         else:
             self.alpha_ = self.estimator.lambda_max_
             alpha_index = np.where(self.estimator.lambda_path_ == self.alpha_)
@@ -148,7 +147,7 @@ class AloLogisticElasticNetClassifierCV(AloGLMClassifier):
         self.class_weight = class_weight
         self.n_splits = n_splits
 
-    def fit(self,X,y,evaluate_on = None,sample_weight = None):
+    def fit(self,X,y,sample_weight = None):
         """
         Fit the model to the data
         """
