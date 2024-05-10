@@ -161,11 +161,10 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
         """
-
-
-
-        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) #partial predictions for each sample  
+        partial_preds = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         local_feature_importances[local_feature_importances == 0] = np.nan
+        partial_preds[partial_preds == 0] = np.nan
      
         # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
         all_tree_LFI_scores,all_tree_full_preds = self._get_LFI(X,y)
@@ -181,18 +180,27 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             ith_partial_preds = all_tree_LFI_scores[:,:,i]
             ith_tree_scores = self.metrics(y[:,i],ith_partial_preds)
             if evaluate_on == 'oob':
-                local_feature_importances[self.oob_indices[i],:,i] = ith_tree_scores[self.oob_indices[i],:]
+                oob_indices = np.unique(self.oob_indices[i])
+                local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
+                partial_preds[oob_indices,:,i] = ith_partial_preds[oob_indices,:]
+            elif evaluate_on == 'inbag':
+                oob_indices = np.unique(self.oob_indices[i])
+                inbag_indices = np.arange(X.shape[0])
+                inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
+                local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
+                partial_preds[inbag_indices,:,i] = ith_partial_preds[inbag_indices,:]
             else:
                 local_feature_importances[:,:,i] = ith_tree_scores
+                partial_preds[:,:,i] = ith_partial_preds
+        
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
-        return local_feature_importances
+        return local_feature_importances, partial_preds
               
     def _get_LFI(self, X,y):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         full_preds = np.zeros((X.shape[0],len(self.tree_explainers)))
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
-            #Get partial and predictions 
             ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
@@ -200,7 +208,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         return LFIs, full_preds
 
        
-class AloRFPlusMDI(RFPlusMDI): #No leave one out 
+class AloRFPlusMDI(RFPlusMDI): #Leave one out 
 
     def __init__(self, rf_plus_model,mode = 'keep_k', evaluate_on = 'oob'):
         self.rf_plus_model = rf_plus_model
@@ -264,17 +272,17 @@ if __name__ == "__main__":
 
     #Test MDI
     rf_plus_mdi = AloRFPlusMDI(rf_plus_model)
-    local_feature_importances = rf_plus_mdi.explain(X_test[:40])
+    local_feature_importances, partial_preds = rf_plus_mdi.explain(X_test[:40])
     pprint.pprint(rf_plus_mdi.get_rankings(local_feature_importances,f))
 
     #print(f"LFIs have shape: {local_feature_importances.shape}") #Should have shape 50, X.shape[1], num trees
     
 
     # Run RFPlusKernelSHAP and RFPlusLime
-    pprint.pprint("Running RFPlusKernelSHAP")
-    rf_plus_kernel_shap = RFPlusKernelSHAP(rf_plus_model)
-    shap_values = rf_plus_kernel_shap.explain(X_train, X_test[:40])
-    pprint.pprint(rf_plus_kernel_shap.get_rankings(shap_values,f))
+    # pprint.pprint("Running RFPlusKernelSHAP")
+    # rf_plus_kernel_shap = RFPlusKernelSHAP(rf_plus_model)
+    # shap_values = rf_plus_kernel_shap.explain(X_train, X_test[:40])
+    # pprint.pprint(rf_plus_kernel_shap.get_rankings(shap_values,f))
 
     # pprint.pprint("Running RFPlusLime")
     # rf_plus_lime = RFPlusLime(rf_plus_model)
