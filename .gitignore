@@ -11,7 +11,10 @@ env
 **.gif
 **.DS_Store
 **.idea
+*.ckpt
 *.pth
+**/events.out.tfevents.*
+**/hparams.yaml
 **Icon*
 venv
 imodels_env

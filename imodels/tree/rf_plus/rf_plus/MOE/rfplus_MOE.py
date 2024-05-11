@@ -1,12 +1,21 @@
 
 
 # PyTorch 
+from typing import Any
+from pytorch_lightning.utilities.types import STEP_OUTPUT
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from torch.utils.data import Dataset, DataLoader
+import pytorch_lightning as pl
+from pytorch_lightning import Trainer
+from pytorch_lightning import seed_everything
+from lightning.pytorch.loggers import TensorBoardLogger
+from torchmetrics.regression import R2Score
+from pytorch_lightning.callbacks import ModelCheckpoint
+
 
 #General imports
 import numpy as np
@@ -38,49 +47,101 @@ import openml
 import time
 
 import torch
-torch.manual_seed(0)
+# torch.manual_seed(0)
+# def train(train_dataloader, val_dataloader, device, optimizer, criterion, forward, config):
+#     for epoch in range(config["max_epochs"]):
+#         train_loss = 0.0
+#         for batch_idx, (data, target, index) in enumerate(train_dataloader):
+#             data, target = data.to(device), target.to(device)
+#             optimizer.zero_grad()
+#             output, aux_loss, _ = forward(data, index)
+#             loss = criterion(output, target)
+#             loss += aux_loss
+#             loss.backward()
+#             optimizer.step()
+#             train_loss += loss.item()
+#         train_loss /= len(train_dataloader)
+#         val_loss = val(val_dataloader, device, criterion, forward)
+#         tune.report(train_loss=train_loss, val_loss=val_loss, epoch=epoch)
 
 
-class _RandomForestPlusRMOE(nn.Module):
-    def __init__(self,rf_model=None, prediction_model=None, include_raw=True, drop_features=True, add_transformers=None, 
-                 center=True, normalize=False, fit_on="all", verbose=True, warm_start=False, lr = 1e-2, val_ratio = 0.2, optimizer = torch.optim.Adam,
-                    criterion = nn.MSELoss(), max_epochs = 10, noise_epsilon = 1e-2, gate_epsilon = 1e-10, loss_coef = 0.01, noisy_gating = False,):
+# def val(val_loader, device, criterion, forward):
+#     eval()
+#     val_loss = 0
+#     with torch.no_grad():
+#         for data, target, _ in val_loader:
+#             data, target = data.to(device), target.to(device)
+#             output, _, _ = forward(data)
+#             val_loss += criterion(output, target).item()
+#     val_loss /= len(val_loader)
+#     return val_loss
+
+
+# def _get_dataloader(X, y, shuffle=True):
+#     dataset = TabularDataset(torch.tensor(X), torch.tensor(y))
+#     dataloader = DataLoader(dataset, X.shape[0], shuffle=shuffle)
+#     return dataloader
+
+
+# def tune_model(X, y, rfplus_model, num_experts, oob_indices_per_expert, gate, train_dataloader, val_dataloader, scheduler, config):
+#     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=val_ratio)
+#     rfplus_model.fit(X_train, y_train)
+#     if isinstance(rfplus_model.estimators_[0], AloGLM):
+#         experts = nn.ModuleList([AloTreePlusExpert(rfplus_model.estimators_[i], rfplus_model.transformers_[i]) for i in range(num_experts)])
+#     else:
+#         experts = nn.ModuleList([TreePlusExpert(rfplus_model.estimators_[i], rfplus_model.transformers_[i]) for i in range(num_experts)])
+
+#     train_dataloader = _get_dataloader(X_train, y_train, True)
+#     val_dataloader = _get_dataloader(X_val, y_val, False)
+
+#     result = tune.run(lambda cfg: train(cfg, train_dataloader, val_dataloader),
+#                       resources_per_trial={"cpu": 4},
+#                       config=config,
+#                       num_samples=3,
+#                       scheduler=scheduler)
+
+#     best_trial = result.get_best_trial("val_loss", "min", "last")
+#     print("Best trial config: {}".format(best_trial.config))
+#     print("Best trial final training loss: {:.4f}".format(best_trial.last_result["train_loss"]))
+#     print("Best trial final validation loss: {:.4f}".format(best_trial.last_result["val_loss"]))
+
+
+
+class RandomForestPlusMOE(pl.LightningModule):
+    def __init__(self,rfplus_model, input_dim, noise_epsilon = 1e-2, val_ratio = 0.2, criterion = nn.MSELoss(), 
+                gate_epsilon = 1e-10, lr = 1e-2, loss_coef = 0.01, noisy_gating = False,k = None):
         
-        rfplus_model = RandomForestPlusRegressor(rf_model=rf_model, prediction_model=prediction_model, include_raw=include_raw, drop_features=drop_features, 
-                                                add_transformers=add_transformers, center=center, normalize=normalize, fit_on=fit_on,verbose=verbose, 
-                                                warm_start=warm_start)
-        self.rfplus_model = rfplus_model
-        self.num_experts = len(rfplus_model.estimators_)
-        self.lr = lr
-        self.val_ratio = val_ratio
-        self.criterion = criterion
-        self.max_epochs = max_epochs
+        super(RandomForestPlusMOE,self).__init__()
+       
         self.noise_epsilon = noise_epsilon
+        self.gate_epsilon = gate_epsilon
         self.loss_coef = loss_coef
         self.noisy_gating = noisy_gating
-        self.gate_epsilon = gate_epsilon
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        config = {"max_epochs": self.max_epochs, "lr": tune.loguniform(1e-4, 1e-1), "loss_coef": tune.loguniform(1e-4, 1e-1)}
-        self.optimizer = optimizer
-
-    def _initialize_model(self,X,y):
-        X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=self.val_ratio, random_state=42)
-        self.rfplus_model.fit(X_train,y_train)
-        if isinstance(self.rfplus_model.estimators_[0], AloGLM):
-            self.experts = self.nn.ModuleList([AloTreePlusExpert(self.rfplus_model.estimators_[i],self.rfplus_model.transformers_[i]) for i in range(self.num_experts)])
+        self.rfplus_model = rfplus_model #trained RF plus model
+        self.transformers_ = [rfplus_model.transformers_[i] for i in range(len(rfplus_model.estimators_))]
+        if isinstance(rfplus_model.estimators_[0], AloGLM):
+            self.experts = nn.ModuleList([AloTreePlusExpert(rfplus_model.estimators_[i],rfplus_model.transformers_[i].transformed_dim) for i in range(len(rfplus_model.estimators_))])
         else:
-            self.experts = self.nn.ModuleList([TreePlusExpert(self.rfplus_model.estimators_[i],self.rfplus_model.transformers_[i]) for i in range(self.num_experts)])
-        self.oob_indices_per_expert = [torch.tensor(self.rfplus_model._oob_indices[i])for i in range(self.num_experts)]
-        self.gate = GatingNetwork(X.shape[1], self.num_experts,self.noise_epsilon,self.noisy_gating)
-       
-        train_dataloader = self._get_dataloader(X, y)
-        val_dataloader = self._get_dataloader(X_val, y_val)
-        return train_dataloader, val_dataloader
+            self.experts = nn.ModuleList([TreePlusExpert(rfplus_model.estimators_[i],rfplus_model.transformers_[i].transformed_dim) for i in range(len(rfplus_model.estimators_))])
+        self.num_experts = len(self.rfplus_model.estimators_)
+        self.oob_indices_per_expert = [torch.tensor(rfplus_model._oob_indices[i])for i in range(self.num_experts)]
+        self.gate = GatingNetwork(input_dim, self.num_experts,self.noise_epsilon,self.noisy_gating)
+        self.lr = lr
+        self.criterion = criterion
+        self.val_ratio = 0.2
+        if k is None:
+            self.k = self.num_experts
+        else:
+            self.k = k
 
-    def fit(self,X,y):
-        train_dataloader, val_dataloader = self._initialize_model(X, y)
+    def cv_squared(self, x):
+        if x.shape[0] == 1:
+            return torch.tensor([0], device=x.device, dtype=x.dtype)
+        return x.float().var() / (x.float().mean()**2 + self.gate_epsilon)
+
+    def _gates_to_load(self, gates):
+        return (gates > 0).sum(0)       
         
-
     def forward(self, x, index = None):
         gating_scores = self.gate(x)
         if self.training:
@@ -105,313 +166,149 @@ class _RandomForestPlusRMOE(nn.Module):
         loss = self.cv_squared(importance) + self.cv_squared(load)
         loss *= self.loss_coef
 
-        # Compute expert outputs
         expert_outputs = torch.zeros_like(gating_scores) #batch size x num_experts
-        expert_outputs = torch.stack([expert(x,index) for i,expert in enumerate(self.experts)], dim=1)
+        expert_outputs = torch.stack([expert(self._apply_rfplus_transformer(x,self.transformers_[i]),index) for i,expert in enumerate(self.experts)], dim=1)
         expert_outputs = torch.sum(gating_scores * expert_outputs, dim=1)
+
+        # # Compute expert outputs
+        # expert_outputs = torch.zeros_like(gating_scores) #batch size x num_experts
+        # expert_outputs = torch.stack([expert(x,index) for i,expert in enumerate(self.experts)], dim=1)
+        # expert_outputs = torch.sum(gating_scores * expert_outputs, dim=1)
         
         return expert_outputs, loss, gating_scores
     
-
-#Define Training Loop
-    def train(self, train_loader):
-        self.train()
-        total_loss = 0
-        for batch_idx, (data, target,index) in enumerate(train_loader):
-            data, target= data.to(device), target.to(device)
-            optimizer.zero_grad()
-            output,aux_loss,_ = model(data,index)
-            loss = criterion(output, target)
-            loss += aux_loss
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-        print('Train Epoch: {} \tLoss: {:.6f}'.format(epoch, total_loss / len(train_loader)))
-
-
+    def _apply_rfplus_transformer(self,x,transformer_):
+        y = x.clone().detach().numpy()
+        y = transformer_.transform(y).get_all_data()
+        return torch.tensor(y, dtype=torch.float32, device=x.device,requires_grad=True)
     
-    def cv_squared(self, x):
-        if x.shape[0] == 1:
-            return torch.tensor([0], device=x.device, dtype=x.dtype)
-        return x.float().var() / (x.float().mean()**2 + self.gate_epsilon)
+    def training_step(self,batch,batch_idx):
+        data, target, index = batch
+        output, aux_loss, _ = self(data, index)
+        loss = self.criterion(output, target) + aux_loss
+        self.log("train_loss", loss)
+        return loss
 
-    def _gates_to_load(self, gates):
-        return (gates > 0).sum(0)
+    def validation_step(self,batch,batch_idx):
+        data, target, index = batch
+        output, _, _ = self(data)
+        loss = self.criterion(output, target) 
+        self.log("val_loss", loss,prog_bar=True)
+        return loss
     
-    def _get_dataloader(self, X, y, index):
-        dataset = TabularDataset(torch.tensor(X),torch.tensor(y))
-        dataloader = DataLoader(dataset, X.shape[0], shuffle=True)
-        return dataloader
+    def test_step(self,batch,batch_idx):
+        data, target, index = batch
+        output, _, _ = self(data)
+        loss = self.criterion(output, target) 
+        self.log("test_loss", loss)
+        self.log("test_r2", r2_score(target, output))
+        return loss
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
+        return optimizer
+    
 
-    @staticmethod
-    def tune_model(train_dataset, val_dataset, config):
-        scheduler = ASHAScheduler(
-            metric="loss",
-            mode="min",
-            max_t=self.max_epochs,
-            grace_period=1,
-            reduction_factor=2
-        )
+    # def on_after_backward(self):
+    #     for name, param in self.named_parameters():
+    #         print(f"Name of parameter: {name}")
+    #         if param.requires_grad:
+    #             self.logger.experiment.add_scalar(f"grads/{name}", param.grad.norm(), self.global_step)
 
        
-
-
-
-
-
-
-        #     self.experts = nn.ModuleList([AloTreePlusExpert(rfplus_model.estimators_[i],rfplus_model.transformers_[i]) for i in range(len(rfplus_model.estimators_))])
-        # else:
-        #     self.experts = nn.ModuleList([TreePlusExpert(rfplus_model.estimators_[i],rfplus_model.transformers_[i]) for i in range(len(rfplus_model.estimators_))])
     
-    # def forward(self, x, index = None):
-    #     if self.training:
-    #         return self.rfplus_model(x, index)
-    #     else:
-    #         return self.rfplus_model.predict(x)
-        
-    # batch_torch_indices = torch.tensor(index) #training indices of elements in batch
-#             all_oob_expert_indicator = [torch.isin(batch_torch_indices, expert_oob_indices) for expert_oob_indices in self.oob_indices_per_expert] #indicates which batch elements are oob for each expert
-#             all_oob_batch_elements = [batch_torch_indices[oob_expert_indicator] for oob_expert_indicator in all_oob_expert_indicator] #oob elements for each expert
-#             all_oob_batch_indices = [torch.nonzero(oob_expert_indicator)for oob_expert_indicator in all_oob_expert_indicator] #indices of oob elements for each expert
-#             oob_mask = torch.zeros(x.shape[0],self.num_experts)  
-#             for i in range(self.num_experts):
-#                 oob_mask[all_oob_batch_indices[i],i] = 1
-#             gating_scores = gating_scores * oob_mask 
-#         else:
-#             _ , topk_indices = gating_scores.topk(min(self.k, self.num_experts), dim=1, sorted=False) #shape (batch_size, k)
-#             mask = torch.zeros_like(gating_scores)
-#             mask.scatter_(1, topk_indices, 1)   
-#             gating_scores = gating_scores * mask
-        
-        
-#         gating_scores = F.softmax(gating_scores, dim=1)
-            
-#         importance = gating_scores.sum(0)
-#         load = self._gates_to_load(gating_scores)
-#         loss = self.cv_squared(importance) + self.cv_squared(load)
-#         loss *= self.loss_coef
 
-#         # Compute expert outputs
-#         expert_outputs = torch.zeros_like(gating_scores) #batch size x num_experts
-#         expert_outputs = torch.stack([expert(x,index) for i,expert in enumerate(self.experts)], dim=1)
-#         expert_outputs = torch.sum(gating_scores * expert_outputs, dim=1)
-        
-#         return expert_outputs, loss, gating_scores
-
-
-
-
-
-# class RFPlusMoELayer(nn.Module):
-
-#     def __init__(self, input_dim, rfplus_model,k = 1,noise_epsilon = 1e-2, loss_coef = 0.01, noisy_gating = True):
-#         """
-#         Mixture of Experts Layer for a RF+ model   
-        
-#         """
-#         super(RFPlusMoELayer, self).__init__()
-#         self.rfplus_model = rfplus_model
-#         num_experts = len(rfplus_model.estimators_)
-#         self.num_experts = num_experts  
-#         self.experts = nn.ModuleList([AloTreePlusExpert(rfplus_model.estimators_[i],rfplus_model.transformers_[i]) for i in range(num_experts)])
-#         self.oob_indices_per_expert = [torch.tensor(rfplus_model._oob_indices[i])for i in range(num_experts)]
-#         self.k = k
-#         self.noise_epsilon = noise_epsilon 
-#         self.gate = GatingNetwork(input_dim, num_experts,noise_epsilon,noisy_gating)
-#         self.register_buffer("mean", torch.tensor([0.0]))
-#         self.register_buffer("std", torch.tensor([1.0]))
-#         self.softplus = nn.Softplus()
-#         self.loss_coef = loss_coef  
-
-    
-#     def forward(self, x, index = None): #x has shape (batch_size, input_dim)
-       
-       
-#         # Compute gating scores and get top_k scores
-#         gating_scores = self.gate(x)
-        
-
-#         if self.training:
-#             batch_torch_indices = torch.tensor(index) #training indices of elements in batch
-#             all_oob_expert_indicator = [torch.isin(batch_torch_indices, expert_oob_indices) for expert_oob_indices in self.oob_indices_per_expert] #indicates which batch elements are oob for each expert
-#             all_oob_batch_elements = [batch_torch_indices[oob_expert_indicator] for oob_expert_indicator in all_oob_expert_indicator] #oob elements for each expert
-#             all_oob_batch_indices = [torch.nonzero(oob_expert_indicator)for oob_expert_indicator in all_oob_expert_indicator] #indices of oob elements for each expert
-#             oob_mask = torch.zeros(x.shape[0],self.num_experts)  
-#             for i in range(self.num_experts):
-#                 oob_mask[all_oob_batch_indices[i],i] = 1
-#             gating_scores = gating_scores * oob_mask 
-#         else:
-#             _ , topk_indices = gating_scores.topk(min(self.k, self.num_experts), dim=1, sorted=False) #shape (batch_size, k)
-#             mask = torch.zeros_like(gating_scores)
-#             mask.scatter_(1, topk_indices, 1)   
-#             gating_scores = gating_scores * mask
-        
-        
-#         gating_scores = F.softmax(gating_scores, dim=1)
-            
-#         importance = gating_scores.sum(0)
-#         load = self._gates_to_load(gating_scores)
-#         loss = self.cv_squared(importance) + self.cv_squared(load)
-#         loss *= self.loss_coef
-
-#         # Compute expert outputs
-#         expert_outputs = torch.zeros_like(gating_scores) #batch size x num_experts
-#         expert_outputs = torch.stack([expert(x,index) for i,expert in enumerate(self.experts)], dim=1)
-#         expert_outputs = torch.sum(gating_scores * expert_outputs, dim=1)
-        
-#         return expert_outputs, loss, gating_scores
-        
-
-#     def cv_squared(self, x):
-       
-#         eps = 1e-10
-#         if x.shape[0] == 1:
-#             return torch.tensor([0], device=x.device, dtype=x.dtype)
-#         return x.float().var() / (x.float().mean()**2 + eps)
-
-#     def _gates_to_load(self, gates):
-#         return (gates > 0).sum(0)
-
-
-# def train(model, device, train_loader, optimizer, criterion, epoch):
-#     model.train()
-#     total_loss = 0
-#     for batch_idx, (data, target,index) in enumerate(train_loader):
-#         data, target= data.to(device), target.to(device)
-#         optimizer.zero_grad()
-#         output,aux_loss,_ = model(data,index)
-#         loss = criterion(output, target)
-#         loss += aux_loss
-#         loss.backward()
-#         optimizer.step()
-#         total_loss += loss.item()
-#     print('Train Epoch: {} \tLoss: {:.6f}'.format(epoch, total_loss / len(train_loader)))
-
-
-# def val(model, device, val_loader, criterion):
-#     model.eval()
-#     test_loss = 0
-#     with torch.no_grad():
-#         for data, target, _ in val_loader:
-#             data, target = data.to(device), target.to(device)
-#             output,_ ,_= model(data)
-#             test_loss += criterion(output, target).item()
-#     test_loss /= len(val_loader)
-#     print('Validation set: Average loss: {:.4f}\n'.format(test_loss))
-
-    
 if __name__ == "__main__":
 
-    RF_plus_MOE = _RandomForestPlusRMOE()
+    
 
-
-    # #Load Data 
-    # suite_id = 353
-    # benchmark_suite = openml.study.get_suite(suite_id)
-    # task_ids = benchmark_suite.tasks
-
-    # #task_id =  task_ids[3] 
-    # task_id =  361256
-    # random_state = 10
-    # print(f"Task ID: {task_id}")
-    # task = openml.tasks.get_task(task_id)
-    # dataset_id = task.dataset_id
-    # dataset = openml.datasets.get_dataset(dataset_id)
+    #Load Data 
+    suite_id = 353
+    benchmark_suite = openml.study.get_suite(suite_id)
+    task_ids = benchmark_suite.tasks
+    task_id =  361237
+    random_state = 8
+    seed_everything(random_state, workers=True)
+    print(f"Task ID: {task_id}")
+    task = openml.tasks.get_task(task_id)
+    dataset_id = task.dataset_id
+    dataset = openml.datasets.get_dataset(dataset_id)
 
 
     
 
 
-    # # Split data into train, validation, and test sets
-    # num_train = 500
-    # X, y, categorical_indicator, attribute_names = dataset.get_data(target=dataset.default_target_attribute,dataset_format="array")
-    # #X,y,f = imodels.get_clean_dataset("fico")
-    # X_train_full, X_test, y_train_full, y_test = train_test_split(X, y, test_size=0.4,random_state=random_state)
-    # X_train, y_train = X_train_full[:num_train], y_train_full[:num_train]
-    # X_val, X_test, y_val, y_test = train_test_split(X_test, y_test, test_size=0.5, random_state=random_state+1)
-    # #X_val, y_val = X_val[:200], y_val[:200]
-
-    # print(f"X_validation has shape: {X_val.shape}")
+    # Split data into train, validation, and test sets
+    max_train = 1000
+    X, y, categorical_indicator, attribute_names = dataset.get_data(target=dataset.default_target_attribute,dataset_format="array")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+    X_train, y_train = copy.deepcopy(X_train)[:max_train], copy.deepcopy(y_train)[:max_train]
+    X_train_torch, X_val_torch, y_train_torch, y_val_torch = train_test_split(copy.deepcopy(X_train),
+    copy.deepcopy(y_train), test_size=0.2)
+    #Get datasets and dataloaders
+    train_dataset = TabularDataset(torch.tensor(X_train_torch), torch.tensor(y_train_torch))
+    train_dataloader = DataLoader(train_dataset, batch_size=X_train_torch.shape[0])
     
-    # X_train_and_val = np.concatenate((copy.deepcopy(X_train),copy.deepcopy(X_val)),axis = 0)
-    # y_train_and_val = np.concatenate((copy.deepcopy(y_train),copy.deepcopy(y_val)),axis = 0)
-
-    # #Train a RF plus model
-    # n_estimators = 256
-    # min_samples_leaf = 5
-
-    # rf = RandomForestRegressor(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=0.33,random_state=0)
-
-    # rf.fit(X_train,y_train)
-
-    # rf_train_val = RandomForestRegressor(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=0.33,random_state=0)
-    # rf_train_val.fit(X_train_and_val,y_train_and_val)
-
-    # rfplus_model = RandomForestPlusRegressor(RandomForestRegressor(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf,
-    #                                                                max_features=0.33,random_state=0),
-    #                                                                prediction_model= AloElasticNetRegressorCV(n_splits=0,l1_ratio=[0.0]),fit_on = "all")  
-    # rfplus_model.fit(X_train,y_train,n_jobs=-1)
-
-    # # Define the MoEModel class
-    # input_dim = X.shape[1]
-    # output_dim = 1
-    # k = 256
-  
-    # rfMOE = RFPlusMoELayer(input_dim, rfplus_model, k,noise_epsilon = 1e-2, noisy_gating = False)
+    val_dataset = TabularDataset(torch.tensor(X_val_torch), torch.tensor(y_val_torch))
+    val_dataloader = DataLoader(val_dataset, batch_size=X_val_torch.shape[0])
     
+    test_dataset = TabularDataset(torch.tensor(X_test), torch.tensor(y_test))
+    test_dataloader = DataLoader(test_dataset, batch_size=X_test.shape[0])
 
-    # #Define device
-    # device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    #fit RF plus model
+    n_estimators = 256
+    min_samples_leaf = 5
+    max_epochs = 10
 
-    # #Define Train DataLoader and Val DataLoader
-    # batch_size = X_train.shape[0]
+    rf_model = RandomForestRegressor(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=0.33)
+    rf_model.fit(X_train, y_train)
+
+
+    rfplus_model = RandomForestPlusRegressor(rf_model = RandomForestRegressor(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=0.33), 
+                                             prediction_model= AloElasticNetRegressorCV(l1_ratio=[0.0]),fit_on = "all")  
+    rfplus_model.fit(X_train,y_train,n_jobs=-1)
+
+
+
+
+
+    RFplus_MOEmodel = RandomForestPlusRegressor(rf_model=RandomForestRegressor(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf,max_features = 0.33),
+                                                 prediction_model= AloElasticNetRegressorCV(l1_ratio=[0.0]),fit_on = "all")  
+    RFplus_MOEmodel.fit(X_train,y_train,n_jobs=-1)
+
+    # Define the ModelCheckpoint callback
+    checkpoint_callback = ModelCheckpoint(dirpath='checkpoints',filename='best_model',monitor='val_loss',
+    mode='min',save_top_k=1,save_last=True,verbose=True)
     
     
-    # trainset = TabularDataset(torch.tensor(X_train), torch.tensor(y_train))
-    # trainloader = torch.utils.data.DataLoader(trainset, batch_size=batch_size,shuffle=True)
+    RFplus_MOE = RandomForestPlusMOE(rfplus_model=RFplus_MOEmodel, input_dim=X.shape[1])
+    logger = TensorBoardLogger(f'RFMOE_task_{task_id}', name='RFMOE')
+    trainer = Trainer(max_epochs=max_epochs,callbacks=[checkpoint_callback],logger=logger)
+    trainer.fit(RFplus_MOE, train_dataloader, val_dataloader)
+    test = trainer.test(dataloaders=test_dataloader)
+
+    # best_model_path = 'checkpoints/best_model.ckpt'
+    # RFplus_MOE_best = RFplus_MOE.load_from_checkpoint(best_model_path, rfplus_model = copy.deepcopy(RFplus_MOEmodel), input_dim = X.shape[1])
+    # RFplus_MOE_best.eval()
+    # RFplus_MOE_preds = RFplus_MOE_best(torch.tensor(X_test,dtype=torch.float32),index = None)
+    # RFplus_MOE_preds,_,gating_scores = RFplus_MOE_preds
+    # RFplus_MOE_preds = RFplus_MOE_preds.detach().numpy()
+    # gating_scores = gating_scores.detach().numpy()
+   
 
 
-    # valset = TabularDataset(torch.tensor(X_val), torch.tensor(y_val))
-    # valloader = torch.utils.data.DataLoader(trainset, batch_size=X_val.shape[0],shuffle=False)
 
-    # # Training hyperparameters
-    # num_epochs = 1
-    # lr = 1e-2
-    # optimizer = torch.optim.Adam(rfMOE.parameters(), lr=lr)
-    # criterion = nn.MSELoss()
-
-    # print("Before MOE")
-    # val(rfMOE, device, valloader, criterion)
+    metrics = [mean_squared_error, r2_score]
+    for m in metrics:
+        print(m.__name__)
+        print("RF model: ",m(y_test,rf_model.predict(X_test)))
+        print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict(X_test)))
+        #print("RF+ Model with MOE: ",m(y_test,RFplus_MOE_preds))
+        print("\n")
     
-    # for epoch in range(1, num_epochs+1):
-    #     print("Starting Epoch: ",epoch)  
-    #     train(rfMOE, device, trainloader, optimizer, criterion, epoch)
-    #     val(rfMOE, device, valloader, criterion)
+
 
     
-    # #Test the model
-    # rfMOE.eval()
-    # rfplus_preds = rfplus_model.predict(X_test)
-    # rf_preds = rf.predict(X_test)
-    # rf_train_val_preds = rf_train_val.predict(X_test)
-    # rfMOE_preds,_,gating_scores = rfMOE(torch.tensor(X_test,dtype=torch.float32))
-    # rfMOE_preds = rfMOE_preds.cpu().detach().numpy()
-    # metrics = [root_mean_squared_error, r2_score, mean_absolute_error]
-
-      
-
-    # for metric in metrics:
-    #     print(metric.__name__)
-    #     print("RF (Train) Model: ",metric(y_test,rf_preds))
-    #     print("RF (Train+Val) Model: ",metric(y_test,rf_train_val_preds))
-    #     print("RF+ Model: ",metric(y_test,rfplus_preds))
-    #     print("RF+ MoE Model: ",metric(y_test,rfMOE_preds))
-    #     print("\n")
-
-    # # Average gating scores
-
-
 
 
     # # rows_to_plot = [10,11,12]
@@ -436,3 +333,10 @@ if __name__ == "__main__":
     # # ax.legend()
 
     # # #plt.show()
+
+
+
+
+
+
+

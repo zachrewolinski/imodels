@@ -47,46 +47,58 @@ class TabularDataset(Dataset):
 
 class TreePlusExpert(nn.Module):
 
-    def __init__(self,estimator_,transformer_,):
+    def __init__(self,estimator_,input_dim):
         super(TreePlusExpert, self).__init__()
         
         self.estimator_ = estimator_
-        self.transformer_ = transformer_
+        treeplus_coefficients = torch.from_numpy(estimator_.coefficients_).float()  # Ensure the tensor type is appropriate (float for most cases)
+        treeplus_intercept = torch.from_numpy(np.array([estimator_.intercept_])).float()
+        treeplus_layer = nn.Linear(input_dim,1)
+        with torch.no_grad():
+            treeplus_layer.weight.copy_(treeplus_coefficients)
+            treeplus_layer.bias.copy_(treeplus_intercept)
+            treeplus_layer.weight.requires_grad = False
+            treeplus_layer.bias.requires_grad = False   
+        self.treeplus_layer = treeplus_layer
+
         
     
     def forward(self,x,index = None): #x has shape (batch_size, input_dim)
         
-        x = x.numpy()
-        if len(x.shape) == 1:
-            x = x.reshape(1,-1)
-        x = self.transformer_.transform(x).get_all_data()
-        out = self.estimator_.predict(x)
-        return torch.tensor(out).float()
+        out = self.treeplus_layer(x).squeeze(1)
+        return out
 
 
 
 class AloTreePlusExpert(nn.Module):
-    def __init__(self,estimator_,transformer_,):
+    def __init__(self,estimator_,input_dim):
         super(AloTreePlusExpert, self).__init__()
         
         self.estimator_ = estimator_
-        self.transformer_ = transformer_
-    
+        treeplus_coefficients = torch.from_numpy(estimator_.coefficients_).float()  # Ensure the tensor type is appropriate (float for most cases)
+        treeplus_intercept = torch.from_numpy(np.array([estimator_.intercept_])).float()
+        treeplus_layer = nn.Linear(input_dim,1)
+        with torch.no_grad():
+            treeplus_layer.weight.copy_(treeplus_coefficients)
+            treeplus_layer.bias.copy_(treeplus_intercept)
+            treeplus_layer.weight.requires_grad = False
+            treeplus_layer.bias.requires_grad = False   
+        self.treeplus_layer = treeplus_layer
+
+        treeplus_loo_coefficients = torch.from_numpy(estimator_.loo_coefficients_[:,:-1]).float()  
+        treeplus_loo_intercept = torch.from_numpy(estimator_.loo_coefficients_[:,-1]).float()    
+        self.treeplus_loo_layer = torch.nn.Parameter(treeplus_loo_coefficients,requires_grad=False)
+        self.treeplus_loo_intercept = torch.nn.Parameter(treeplus_loo_intercept,requires_grad=False)
+
+        
     def forward(self,x,index = None): #x has shape (batch_size, input_dim)
         
-        x = x.numpy()
-        if len(x.shape) == 1:
-            x = x.reshape(1,-1)
         if self.training:
-            x = self.transformer_.transform(x).get_all_data()
-            x1 = np.hstack((x,np.ones((x.shape[0],1))))
-            batch_loo_coef = self.estimator_.loo_coefficients_[index.numpy(),:]
-            out = self.estimator_.inv_link_fn(np.sum(x1*batch_loo_coef,axis = 1))
-        else:
-            x = self.transformer_.transform(x).get_all_data()
-            out = self.estimator_.inv_link_fn(x@self.estimator_.coefficients_ + self.estimator_.intercept_) 
+            out = torch.sum(x*self.treeplus_loo_layer[index,:],dim = 1) + self.treeplus_loo_intercept[index]
+        else:        
+            out = self.treeplus_layer(x).squeeze(1)
+        return out
         
-        return torch.tensor(out).float()
     
 
 
@@ -115,3 +127,12 @@ class GatingNetwork(nn.Module):
             pass
         return gating_scores
     
+
+
+
+
+
+        #fc = nn.Linear(self.transformer_.transformed_dim,self.transformer_.transformed_dim)
+        # torch.nn.init.eye_(fc.weight)
+        # torch.nn.init.zeros_(fc.bias)
+        # self.fc = fc
