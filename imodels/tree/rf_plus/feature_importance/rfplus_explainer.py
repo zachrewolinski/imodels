@@ -22,6 +22,9 @@ from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_classification import
 from imodels.tree.rf_plus.data_transformations.block_transformers import BlockTransformerBase, _blocked_train_test_split, BlockPartitionedData
 from imodels.tree.rf_plus.rf_plus.rf_plus_models import RandomForestPlusRegressor, RandomForestPlusClassifier
 
+#Wandb
+import wandb
+
 #Feature importance methods
 import shap,lime
 
@@ -194,6 +197,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 partial_preds[:,:,i] = ith_partial_preds
         
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
+        partial_preds = np.nanmean(partial_preds,axis=-1)
         return local_feature_importances, partial_preds
               
     def _get_LFI(self, X,y):

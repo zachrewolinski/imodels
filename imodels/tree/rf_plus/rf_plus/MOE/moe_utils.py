@@ -1,3 +1,11 @@
+
+
+#General imports
+import numpy as np
+import matplotlib.pyplot as plt
+import pandas as pd
+import copy
+
 # PyTorch 
 import torch
 import torch.nn as nn
@@ -5,12 +13,6 @@ import torch.nn.functional as F
 from torch.distributions.normal import Normal
 from torch.optim import Adam
 from torch.utils.data import Dataset, DataLoader
-
-#General imports
-import numpy as np
-import matplotlib.pyplot as plt
-import pandas as pd
-import copy
 
 #sklearn imports
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
@@ -27,11 +29,8 @@ from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_classification import
 import openml
 import time
 
-import torch
-torch.manual_seed(0)
-
-
-
+#Wandb
+import wandb
 
 class TabularDataset(Dataset):
     def __init__(self, x_tensor, y_tensor):
@@ -43,61 +42,59 @@ class TabularDataset(Dataset):
 
     def __len__(self):
         return len(self.x)
+   
     
 
 class TreePlusExpert(nn.Module):
 
-    def __init__(self,estimator_,input_dim):
+    def __init__(self,estimator_,input_dim,train_experts = True):
         super(TreePlusExpert, self).__init__()
         
         self.estimator_ = estimator_
         treeplus_coefficients = torch.from_numpy(estimator_.coefficients_).float()  # Ensure the tensor type is appropriate (float for most cases)
         treeplus_intercept = torch.from_numpy(np.array([estimator_.intercept_])).float()
-        treeplus_layer = nn.Linear(input_dim,1)
-        with torch.no_grad():
-            treeplus_layer.weight.copy_(treeplus_coefficients)
-            treeplus_layer.bias.copy_(treeplus_intercept)
-            treeplus_layer.weight.requires_grad = False
-            treeplus_layer.bias.requires_grad = False   
-        self.treeplus_layer = treeplus_layer
-
+        self.treeplus_layer = nn.Parameter(treeplus_coefficients,requires_grad = train_experts)
+        self.treeplus_layer_bias = nn.Parameter(treeplus_intercept,requires_grad = train_experts)
+        self.fc1 = nn.Linear(input_dim,input_dim,bias = False)
+        self.nl = nn.ReLU()
+        self.fc2 = nn.Linear(input_dim,input_dim,bias = False)
+        torch.nn.init.eye_(self.fc1.weight)
+        torch.nn.init.eye_(self.fc2.weight)
         
-    
+   
     def forward(self,x,index = None): #x has shape (batch_size, input_dim)
         
-        out = self.treeplus_layer(x).squeeze(1)
-        return out
+        #x = self.fc2(self.nl(self.fc1(x)))
+        return x @ self.treeplus_layer + self.treeplus_layer_bias
+        
 
 
 
 class AloTreePlusExpert(nn.Module):
-    def __init__(self,estimator_,input_dim):
+    def __init__(self,estimator_,input_dim,train_experts = False,classification = False):
         super(AloTreePlusExpert, self).__init__()
         
         self.estimator_ = estimator_
+        self.classification = classification
         treeplus_coefficients = torch.from_numpy(estimator_.coefficients_).float()  # Ensure the tensor type is appropriate (float for most cases)
         treeplus_intercept = torch.from_numpy(np.array([estimator_.intercept_])).float()
-        treeplus_layer = nn.Linear(input_dim,1)
-        with torch.no_grad():
-            treeplus_layer.weight.copy_(treeplus_coefficients)
-            treeplus_layer.bias.copy_(treeplus_intercept)
-            treeplus_layer.weight.requires_grad = False
-            treeplus_layer.bias.requires_grad = False   
-        self.treeplus_layer = treeplus_layer
-
+        self.treeplus_layer = nn.Parameter(treeplus_coefficients,requires_grad = train_experts)
+        self.treeplus_layer_bias = nn.Parameter(treeplus_intercept,requires_grad = train_experts)        
         treeplus_loo_coefficients = torch.from_numpy(estimator_.loo_coefficients_[:,:-1]).float()  
         treeplus_loo_intercept = torch.from_numpy(estimator_.loo_coefficients_[:,-1]).float()    
-        self.treeplus_loo_layer = torch.nn.Parameter(treeplus_loo_coefficients,requires_grad=False)
-        self.treeplus_loo_intercept = torch.nn.Parameter(treeplus_loo_intercept,requires_grad=False)
+        self.treeplus_loo_layer = torch.nn.Parameter(treeplus_loo_coefficients,requires_grad=train_experts)
+        self.treeplus_loo_intercept = torch.nn.Parameter(treeplus_loo_intercept,requires_grad=train_experts)
 
         
     def forward(self,x,index = None): #x has shape (batch_size, input_dim)
         
+        #x = self.fc2(self.nl(self.fc1(x)))
         if self.training:
             out = torch.sum(x*self.treeplus_loo_layer[index,:],dim = 1) + self.treeplus_loo_intercept[index]
         else:        
-            out = self.treeplus_layer(x).squeeze(1)
+            out = x @ self.treeplus_layer + self.treeplus_layer_bias
         return out
+
         
     
 
@@ -108,8 +105,8 @@ class GatingNetwork(nn.Module):
         self.num_experts = num_experts 
         self.first_gate = nn.Linear(input_dim, input_dim)  
         self.relu = nn.ReLU()
-        self.second_gate = nn.Linear(input_dim, input_dim)
-        self.relu2 = nn.ReLU()
+        # self.second_gate = nn.Linear(input_dim, input_dim)
+        # self.relu2 = nn.ReLU()
         self.output_gate = nn.Linear(input_dim, num_experts)
         self.noisy_gating = noisy_gating
 
@@ -120,8 +117,8 @@ class GatingNetwork(nn.Module):
     def forward(self, x):
         gating_scores = self.first_gate(x)
         gating_scores = self.relu(gating_scores)
-        gating_scores = self.second_gate(gating_scores)
-        gating_scores = self.relu2(gating_scores)
+        # gating_scores = self.second_gate(gating_scores)
+        # gating_scores = self.relu2(gating_scores)
         gating_scores = self.output_gate(gating_scores)
         if self.noisy_gating:
             pass
@@ -136,3 +133,10 @@ class GatingNetwork(nn.Module):
         # torch.nn.init.eye_(fc.weight)
         # torch.nn.init.zeros_(fc.bias)
         # self.fc = fc
+
+
+        # self.fc1 = nn.Linear(input_dim,input_dim,bias = False)
+        # self.nl = nn.ReLU()
+        # self.fc2 = nn.Linear(input_dim,input_dim,bias = False)
+        # torch.nn.init.eye_(self.fc1.weight)
+        # torch.nn.init.eye_(self.fc2.weight)
