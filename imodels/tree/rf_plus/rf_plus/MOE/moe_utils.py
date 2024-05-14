@@ -126,7 +126,16 @@ class GatingNetwork(nn.Module):
     
 
 
+def get_columns_to_exceed_threshold(gating_scores, threshold=0.99):
+    sorted_gating_scores, _ = torch.sort(gating_scores, dim=1, descending=True)
+    cumulative_sums = torch.cumsum(sorted_gating_scores, dim=1)
+    indices = torch.sum((cumulative_sums <= threshold).int(), dim=1)
+    return indices.float()
 
+
+def tune_hyperparameters(model,X,y,task_id,n_estimators = 100,min_samples_leaf = 50,max_epochs = 10):
+    pass
+    
 
 
         #fc = nn.Linear(self.transformer_.transformed_dim,self.transformer_.transformed_dim)

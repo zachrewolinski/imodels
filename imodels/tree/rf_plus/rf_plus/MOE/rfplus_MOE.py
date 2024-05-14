@@ -58,8 +58,9 @@ class RandomForestPlusMOE(pl.LightningModule):
         super(RandomForestPlusMOE,self).__init__()
        
         rfplus_model = copy.deepcopy(rfplus_model)  
-        
+        self.rfplus_model = rfplus_model
         self.task = rfplus_model._task
+        self.input_dim = input_dim  
         self.noise_epsilon = noise_epsilon
         self.gate_epsilon = gate_epsilon
         self.loss_coef = loss_coef
@@ -155,7 +156,7 @@ class RandomForestPlusMOE(pl.LightningModule):
             for name,metric in self.class_test_metrics.items():
                 self.log("val_" +name, metric(class_output,target.long()),prog_bar=True)
         else:
-            for name,metric in self.class_test_metrics.items():
+            for name,metric in self.test_metrics.items():
                 self.log("val_" + name, metric(output,target),prog_bar=True)
         self.log("val_loss", loss,prog_bar=True)
         return loss
@@ -172,141 +173,152 @@ class RandomForestPlusMOE(pl.LightningModule):
             for name,metric in self.class_test_metrics.items():
                 self.log("test_" +name, metric(class_output,target.long()),prog_bar=True)
         else:
-            for name,metric in self.class_test_metrics.items():
+            for name,metric in self.test_metrics.items():
                 self.log("test_" + name, metric(output,target),prog_bar=True)
         return loss
+    
+   
     
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
         return optimizer
     
 
-    
+    # def on_save_checkpoint(self, checkpoint):
+    #     checkpoint['rfplus_model'] = self.rfplus_model
+    #     checkpoint['input_dim'] = self.input_dim
+    #     return checkpoint
 
-if __name__ == "__main__":
-
-    
-
-    #Load Data 
-    suite_id = 353
-    benchmark_suite = openml.study.get_suite(suite_id)
-    task_ids = benchmark_suite.tasks
-    task_id =  359945
-    random_state = 42
-    task = "regression"
-    seed_everything(random_state, workers=True)
-    print(f"Task ID: {task_id}")
-    task = openml.tasks.get_task(task_id)
-    dataset_id = task.dataset_id
-    dataset = openml.datasets.get_dataset(dataset_id)
-
+    # def on_load_checkpoint(self, checkpoint):
+    #     self.rfplus_model = checkpoint['rfplus_model']
+    #     self.input_dim = checkpoint['input_dim']
 
     
 
+# if __name__ == "__main__":
 
-    # Split data into train, validation, and test sets
-    max_train = 1000
-    X, y, categorical_indicator, attribute_names = dataset.get_data(target=dataset.default_target_attribute,dataset_format="array")
-    X,y,f = imodels.get_clean_dataset("enhancer")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
-    X_train, y_train = copy.deepcopy(X_train)[:max_train], copy.deepcopy(y_train)[:max_train]
-    X_train_torch, X_val_torch, y_train_torch, y_val_torch = train_test_split(copy.deepcopy(X_train),copy.deepcopy(y_train), test_size=0.2)
     
-    
-    #Get datasets and dataloaders
-    train_dataset = TabularDataset(torch.tensor(X_train_torch), torch.tensor(y_train_torch))
-    train_dataloader = DataLoader(train_dataset, batch_size=X_train_torch.shape[0])
-    
-    val_dataset = TabularDataset(torch.tensor(X_val_torch), torch.tensor(y_val_torch))
-    val_dataloader = DataLoader(val_dataset, batch_size=X_val_torch.shape[0])
-    
-    test_dataset = TabularDataset(torch.tensor(X_test), torch.tensor(y_test))
-    test_dataloader = DataLoader(test_dataset, batch_size=X_test.shape[0])
 
-    #fit RF plus model
-    if task == "classification":
-        n_estimators = 256
-        min_samples_leaf = 2
-        max_epochs = 50
-        max_features = "sqrt"
-    else:
-        n_estimators = 256
-        min_samples_leaf = 5
-        max_epochs = 50
-        max_features = 0.33
-
-    rf_model = RandomForestClassifier(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=max_features,random_state=random_state)
-    rf_model.fit(X_train, y_train)
-
-
-    rfplus_model = RandomForestPlusClassifier(rf_model = rf_model,fit_on = "all")
-    rfplus_model.fit(X_train,y_train,n_jobs=-1)
-
-
-    # # RFplus_MOEmodel = RandomForestPlusRegressor(rf_model=rf_model,fit_on = "all")  
-    # # RFplus_MOEmodel.fit(X_train,y_train,n_jobs=-1)
-
-    #Define the ModelCheckpoint callback
-    checkpoint_callback = ModelCheckpoint(dirpath='checkpoints',filename='best_model',monitor='val_loss',mode='min',save_top_k=1,save_last=True,verbose=True)
-    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=5, verbose=False, mode="min")
-    
-    
-    RFplus_MOE = RandomForestPlusMOE(rfplus_model=rfplus_model, input_dim=X.shape[1], criterion= nn.BCELoss(), use_loo = True, train_experts=  False) #BinaryF1ScoreBinaryF1Score
-    logger = TensorBoardLogger(f'RFMOE_task_{task_id}', name='RFMOE')
-    trainer = Trainer(max_epochs=max_epochs,callbacks=[checkpoint_callback])
-    trainer.fit(RFplus_MOE, train_dataloader, val_dataloader)
-    test = trainer.test(dataloaders=test_dataloader)
-
-
-    if rfplus_model._task == "classification":
-        class_metrics = [accuracy_score, f1_score, precision_score]
-        prob_metrics = [log_loss,roc_auc_score]
-        for m in class_metrics:
-            print(m.__name__)
-            print("RF model: ",m(y_test,rf_model.predict(X_test)))
-            print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict(X_test)))
-            print("\n")
-        for m in prob_metrics:
-            print(m.__name__)
-            print("RF model: ",m(y_test,rf_model.predict_proba(X_test)[:,1]))
-            print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict_proba(X_test)[:,1]))
-            print("\n")
-    else:
-        metrics = [mean_absolute_error,mean_squared_error, r2_score]
-        for m in metrics:
-            print(m.__name__)
-            print("RF model: ",m(y_test,rf_model.predict(X_test)))
-            print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict(X_test)))
-            #print("RF+ Model with MOE: ",m(y_test,RFplus_MOE_preds))
-            print("\n")
-    
+    # #Load Data 
+    # suite_id = 353
+    # benchmark_suite = openml.study.get_suite(suite_id)
+    # task_ids = benchmark_suite.tasks
+    # task_id =  359945
+    # random_state = 42
+    # task = "regression"
+    # seed_everything(random_state, workers=True)
+    # print(f"Task ID: {task_id}")
+    # task = openml.tasks.get_task(task_id)
+    # dataset_id = task.dataset_id
+    # dataset = openml.datasets.get_dataset(dataset_id)
 
 
     
 
 
-    # # rows_to_plot = [10,11,12]
-    # # # Create a figure and axes
-    # # fig, ax = plt.subplots()
-    # # gating_scores = gating_scores.detach().numpy()
-    # # # Set the width of each bar
-    # # bar_width = 0.8 / len(rows_to_plot)
+    # # Split data into train, validation, and test sets
+    # max_train = 1000
+    # X, y, categorical_indicator, attribute_names = dataset.get_data(target=dataset.default_target_attribute,dataset_format="array")
+    # X,y,f = imodels.get_clean_dataset("enhancer")
+    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+    # X_train, y_train = copy.deepcopy(X_train)[:max_train], copy.deepcopy(y_train)[:max_train]
+    # X_train_torch, X_val_torch, y_train_torch, y_val_torch = train_test_split(copy.deepcopy(X_train),copy.deepcopy(y_train), test_size=0.2)
+    
+    
+    # #Get datasets and dataloaders
+    # train_dataset = TabularDataset(torch.tensor(X_train_torch), torch.tensor(y_train_torch))
+    # train_dataloader = DataLoader(train_dataset, batch_size=X_train_torch.shape[0])
+    
+    # val_dataset = TabularDataset(torch.tensor(X_val_torch), torch.tensor(y_val_torch))
+    # val_dataloader = DataLoader(val_dataset, batch_size=X_val_torch.shape[0])
+    
+    # test_dataset = TabularDataset(torch.tensor(X_test), torch.tensor(y_test))
+    # test_dataloader = DataLoader(test_dataset, batch_size=X_test.shape[0])
 
-    # # # Iterate over the selected rows and plot them as bar plots
-    # # for i, row_idx in enumerate(rows_to_plot):
-    # #     row_data = gating_scores[row_idx]
-    # #     x = np.arange(gating_scores.shape[1]) + i * bar_width
-    # #     ax.bar(x, row_data, width=bar_width, label=f'Row {row_idx}')
+    # #fit RF plus model
+    # if task == "classification":
+    #     n_estimators = 256
+    #     min_samples_leaf = 2
+    #     max_epochs = 50
+    #     max_features = "sqrt"
+    # else:
+    #     n_estimators = 256
+    #     min_samples_leaf = 5
+    #     max_epochs = 50
+    #     max_features = 0.33
 
-    # # # Set the x-tick labels and positions
-    # # x_ticks = np.arange(gating_scores.shape[1]) + bar_width * (len(rows_to_plot) - 1) / 2
-    # # ax.set_xticks(x_ticks)
-    # # ax.set_xticklabels([f'{i}' for i in range(gating_scores.shape[1])])
+    # rf_model = RandomForestClassifier(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=max_features,random_state=random_state)
+    # rf_model.fit(X_train, y_train)
 
-    # # # Add a legend
-    # # ax.legend()
 
-    # # #plt.show()
+    # rfplus_model = RandomForestPlusClassifier(rf_model = rf_model,fit_on = "all")
+    # rfplus_model.fit(X_train,y_train,n_jobs=-1)
+
+
+    # # # RFplus_MOEmodel = RandomForestPlusRegressor(rf_model=rf_model,fit_on = "all")  
+    # # # RFplus_MOEmodel.fit(X_train,y_train,n_jobs=-1)
+
+    # #Define the ModelCheckpoint callback
+    # checkpoint_callback = ModelCheckpoint(dirpath='checkpoints',filename='best_model',monitor='val_loss',mode='min',save_top_k=1,save_last=True,verbose=True)
+    # early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=5, verbose=False, mode="min")
+    
+    
+    # RFplus_MOE = RandomForestPlusMOE(rfplus_model=rfplus_model, input_dim=X.shape[1], criterion= nn.BCELoss(), use_loo = True, train_experts=  False) #BinaryF1ScoreBinaryF1Score
+    # logger = TensorBoardLogger(f'RFMOE_task_{task_id}', name='RFMOE')
+    # trainer = Trainer(max_epochs=max_epochs,callbacks=[checkpoint_callback])
+    # trainer.fit(RFplus_MOE, train_dataloader, val_dataloader)
+    # test = trainer.test(dataloaders=test_dataloader)
+
+
+    # if rfplus_model._task == "classification":
+    #     class_metrics = [accuracy_score, f1_score, precision_score]
+    #     prob_metrics = [log_loss,roc_auc_score]
+    #     for m in class_metrics:
+    #         print(m.__name__)
+    #         print("RF model: ",m(y_test,rf_model.predict(X_test)))
+    #         print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict(X_test)))
+    #         print("\n")
+    #     for m in prob_metrics:
+    #         print(m.__name__)
+    #         print("RF model: ",m(y_test,rf_model.predict_proba(X_test)[:,1]))
+    #         print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict_proba(X_test)[:,1]))
+    #         print("\n")
+    # else:
+    #     metrics = [mean_absolute_error,mean_squared_error, r2_score]
+    #     for m in metrics:
+    #         print(m.__name__)
+    #         print("RF model: ",m(y_test,rf_model.predict(X_test)))
+    #         print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict(X_test)))
+    #         #print("RF+ Model with MOE: ",m(y_test,RFplus_MOE_preds))
+    #         print("\n")
+    
+
+
+    
+
+
+    # # # rows_to_plot = [10,11,12]
+    # # # # Create a figure and axes
+    # # # fig, ax = plt.subplots()
+    # # # gating_scores = gating_scores.detach().numpy()
+    # # # # Set the width of each bar
+    # # # bar_width = 0.8 / len(rows_to_plot)
+
+    # # # # Iterate over the selected rows and plot them as bar plots
+    # # # for i, row_idx in enumerate(rows_to_plot):
+    # # #     row_data = gating_scores[row_idx]
+    # # #     x = np.arange(gating_scores.shape[1]) + i * bar_width
+    # # #     ax.bar(x, row_data, width=bar_width, label=f'Row {row_idx}')
+
+    # # # # Set the x-tick labels and positions
+    # # # x_ticks = np.arange(gating_scores.shape[1]) + bar_width * (len(rows_to_plot) - 1) / 2
+    # # # ax.set_xticks(x_ticks)
+    # # # ax.set_xticklabels([f'{i}' for i in range(gating_scores.shape[1])])
+
+    # # # # Add a legend
+    # # # ax.legend()
+
+    # # # #plt.show()
 
 
 
