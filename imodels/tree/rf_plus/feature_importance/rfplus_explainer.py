@@ -11,7 +11,7 @@ from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, log_loss
-
+from sklearn.datasets import load_diabetes, fetch_california_housing
 
 #imports from imodels
 import imodels
@@ -251,14 +251,11 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
             
             
         
-        
-    
-
 if __name__ == "__main__":
 
     #Test Regression
 
-    # Load data
+    #Test Regression
     X, y, f = imodels.get_clean_dataset("california_housing")
     pprint.pprint(f"X Shape: {X.shape}")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -276,20 +273,20 @@ if __name__ == "__main__":
     local_feature_importances, partial_preds = rf_plus_mdi.explain(X_test[:40])
     pprint.pprint(rf_plus_mdi.get_rankings(local_feature_importances,f))
 
-    #print(f"LFIs have shape: {local_feature_importances.shape}") #Should have shape 50, X.shape[1], num trees
+    print(f"LFIs have shape: {local_feature_importances.shape}") #Should have shape 50, X.shape[1], num trees
     
 
-    # Run RFPlusKernelSHAP and RFPlusLime
-    # pprint.pprint("Running RFPlusKernelSHAP")
-    # rf_plus_kernel_shap = RFPlusKernelSHAP(rf_plus_model)
-    # shap_values = rf_plus_kernel_shap.explain(X_train, X_test[:40])
-    # pprint.pprint(rf_plus_kernel_shap.get_rankings(shap_values,f))
+    #Run RFPlusKernelSHAP and RFPlusLime
+    pprint.pprint("Running RFPlusKernelSHAP")
+    rf_plus_kernel_shap = RFPlusKernelSHAP(rf_plus_model)
+    shap_values = rf_plus_kernel_shap.explain(X_train, X_test[:40])
+    pprint.pprint(rf_plus_kernel_shap.get_rankings(shap_values,f))
 
-    # pprint.pprint("Running RFPlusLime")
-    # rf_plus_lime = RFPlusLime(rf_plus_model)
-    # lime_values = rf_plus_lime.explain(X_train[:100], X_test[:40])
-    # pprint.pprint(lime_values.shape)
-    # pprint.pprint("RFPlusLime done")
+    pprint.pprint("Running RFPlusLime")
+    rf_plus_lime = RFPlusLime(rf_plus_model)
+    lime_values = rf_plus_lime.explain(X_train[:100], X_test[:40])
+    pprint.pprint(lime_values.shape)
+    pprint.pprint("RFPlusLime done")
 
 
 

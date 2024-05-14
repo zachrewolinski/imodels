@@ -208,7 +208,7 @@ class _RandomForestPlus(BaseEstimator):
             tree_sample_weight[oob_indices] = 1e-12
         
         elif self.fit_on == "oob": #only use oob samples
-            tree_sample_weight = np.zeros(len(tree_y_train))
+            tree_sample_weight = np.ones(len(tree_y_train))*1e-12
             tree_sample_weight[oob_indices] = 1
         
         elif self.fit_on == "all": #use all samples
