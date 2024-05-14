@@ -134,11 +134,8 @@ class RFPlusLime(_RandomForestPlusExplainer):
         
         # Convert the array to a DataFrame
         lime_values = pd.DataFrame(result, columns=[f'Feature_{i}' for i in range(num_features)])
-
-        if self.task == "classification":
-            lime_values = np.sum(np.abs(lime_values),axis=-1)
-        else:
-            lime_values = abs(lime_values)
+        lime_values = abs(lime_values)
+        
         return lime_values
         
 class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out 
