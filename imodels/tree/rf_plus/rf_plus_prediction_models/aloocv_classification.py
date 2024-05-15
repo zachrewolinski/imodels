@@ -85,7 +85,7 @@ class AloGLMClassifier(AloGLM):
         
         self.sample_weight = (self.sample_weight/np.sum(self.sample_weight)) * len(self.sample_weight)
         
-        self.estimator.fit(X, y)   
+        self.estimator.fit(X, y,sample_weight = self.sample_weight)   
 
         for i,lambda_ in enumerate(self.estimator.lambda_path_):
             self._coeffs_for_each_alpha[lambda_] = self.estimator.coef_path_[0,:, i]
@@ -94,7 +94,7 @@ class AloGLMClassifier(AloGLM):
 
         #fit the model on the training set and compute the coefficients
         if self.n_splits > 0:
-            self._get_aloocv_alpha(X, y_train,max_h)
+            self._get_aloocv_alpha(X, y_train,max_h,sample_weight = self.sample_weight)
         else:
             self.alpha_ = self.estimator.lambda_max_
             alpha_index = np.where(self.estimator.lambda_path_ == self.alpha_)

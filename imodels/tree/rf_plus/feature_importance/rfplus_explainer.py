@@ -12,6 +12,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, log_loss
 from sklearn.datasets import load_diabetes, fetch_california_housing
+from sklearn.linear_model import LogisticRegressionCV
 
 #imports from imodels
 import imodels
@@ -255,11 +256,9 @@ if __name__ == "__main__":
 
     #Test Regression
 
-    #Test Regression
-    X, y, f = imodels.get_clean_dataset("california_housing")
-    pprint.pprint(f"X Shape: {X.shape}")
+    #Load  Regression
+    X, y, f = imodels.get_clean_dataset("")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
 
     # Fit a RFPlus model
     rf_model = RandomForestRegressor(n_estimators=10, min_samples_leaf=5, random_state=42)

@@ -201,7 +201,6 @@ class _RandomForestPlus(BaseEstimator):
             evaluate_on = None
     
 
-
         if self.fit_on == "inbag": #only use in-bag samples
             tree_sample_weight = np.zeros(len(tree_y_train))
             tree_sample_weight[unique_inbag_indices] = counts_elements
@@ -347,30 +346,34 @@ if __name__ == "__main__":
     random_state, num_train = 42, 500
 
     #Test Regression
-    task_id =  359946
-    task = openml.tasks.get_task(task_id)
-    dataset_id = task.dataset_id
-    dataset = openml.datasets.get_dataset(dataset_id)
-    X, y, categorical_indicator, attribute_names = dataset.get_data(target=dataset.default_target_attribute,dataset_format="array")
+    # task_id =  359946
+    # task = openml.tasks.get_task(task_id)
+    # dataset_id = task.dataset_id
+    # dataset = openml.datasets.get_dataset(dataset_id)
+    # X, y, categorical_indicator, attribute_names = dataset.get_data(target=dataset.default_target_attribute,dataset_format="array")
 
-    rf = RandomForestRegressor(n_estimators=24, random_state=random_state,max_features=0.33,min_samples_leaf=10)
-    rf_plus = RandomForestPlusRegressor(rf_model = rf, prediction_model=AloElasticNetRegressorCV(),fit_on = "all")
-    rf_plus.fit(X[:num_train],y[:num_train])
-    pprint.pprint(f"{r2_score(y[num_train:,],rf_plus.predict(X[num_train:]))}")
+    # rf = RandomForestRegressor(n_estimators=24, random_state=random_state,max_features=0.33,min_samples_leaf=10)
+    # rf_plus = RandomForestPlusRegressor(rf_model = rf, prediction_model=AloElasticNetRegressorCV(),fit_on = "all")
+    # rf_plus.fit(X[:num_train],y[:num_train])
+    # pprint.pprint(f"{r2_score(y[num_train:,],rf_plus.predict(X[num_train:]))}")
+
+
 
     #Test Classification
-    X,y,f = imodels.get_clean_dataset("enhancer")
-    rf_clf = RandomForestClassifier(n_estimators=24, random_state=random_state,max_features=0.33,min_samples_leaf=10)
-    rfplus_classifier = RandomForestPlusClassifier(rf_model = rf_clf, prediction_model=AloLogisticElasticNetClassifierCV(),fit_on = "all")
-    rfplus_classifier.fit(X[:num_train],y[:num_train],n_jobs=None)
-    prob_predictions = rfplus_classifier.predict_proba(X[num_train:],n_jobs=None)
-    predictions = rfplus_classifier.predict(X[num_train:],n_jobs=None)
+    X, y, f = imodels.get_clean_dataset("diabetes")
+    pprint.pprint(f"X Shape: {X.shape}")
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    print(f"Prob predictions: {prob_predictions}")
-    print(f"Predictions: {predictions}")
 
-    pprint.pprint(f"ROC AUC Score {roc_auc_score(y[num_train:,],prob_predictions[:,1])}")
-    pprint.pprint(f"Accuracy Score {accuracy_score(y[num_train:,],predictions)}")
+    # Fit a RFPlus model
+    rf_model = RandomForestClassifier(n_estimators=10, min_samples_leaf=3,max_features='sqrt', random_state=42)
+    rf_plus_model_all = RandomForestPlusClassifier(rf_model = rf_model, fit_on="all")
+    rf_plus_model_all.fit(X_train[:100], y_train[:100])
+    
+    
+    rf_plus_model_oob = RandomForestPlusClassifier(rf_model = rf_model, fit_on="oob")
+    rf_plus_model_oob.fit(X_train[:100], y_train[:100])
+    
 
 
     
