@@ -257,7 +257,7 @@ if __name__ == "__main__":
     #Test Regression
 
     #Load  Regression
-    X, y, f = imodels.get_clean_dataset("")
+    X, y, f = imodels.get_clean_dataset("diabetes_regr")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     # Fit a RFPlus model
