@@ -105,20 +105,19 @@ class GatingNetwork(nn.Module):
         self.num_experts = num_experts 
         self.first_gate = nn.Linear(input_dim, input_dim)  
         self.relu = nn.ReLU()
-        # self.second_gate = nn.Linear(input_dim, input_dim)
+        # self.second_gate = nn.Linear(input_dim, input_dim,)
         # self.relu2 = nn.ReLU()
         self.output_gate = nn.Linear(input_dim, num_experts)
         self.noisy_gating = noisy_gating
-
        
-        nn.init.constant_(self.output_gate.weight,1.0/num_experts)
+        nn.init.constant_(self.output_gate.weight,1.0)
         nn.init.zeros_(self.output_gate.bias)
         
     def forward(self, x):
         gating_scores = self.first_gate(x)
         gating_scores = self.relu(gating_scores)
-        # gating_scores = self.second_gate(gating_scores)
-        # gating_scores = self.relu2(gating_scores)
+        #gating_scores = self.second_gate(gating_scores)
+        #gating_scores = self.relu2(gating_scores)
         gating_scores = self.output_gate(gating_scores)
         if self.noisy_gating:
             pass

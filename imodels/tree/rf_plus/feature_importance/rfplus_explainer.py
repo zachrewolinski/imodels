@@ -171,15 +171,15 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         all_tree_LFI_scores,all_tree_full_preds = self._get_LFI(X,y)
         
         if y is None:
-            y = all_tree_full_preds
+            y = all_tree_full_preds 
             evaluate_on = None
         else:
             y = np.hstack([y.reshape(-1,1) for _ in range(len(self.tree_explainers))])
             evaluate_on = self.evaluate_on
         
         for i in range(all_tree_full_preds.shape[1]):
-            ith_partial_preds = all_tree_LFI_scores[:,:,i]
-            ith_tree_scores = self.metrics(y[:,i],ith_partial_preds)
+            ith_partial_preds = all_tree_LFI_scores[:,:,i] #partial prediction for tree i 
+            ith_tree_scores = self.metrics(y[:,i],ith_partial_preds) #error metric between y and ith partial prediction
             if evaluate_on == 'oob':
                 oob_indices = np.unique(self.oob_indices[i])
                 local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
