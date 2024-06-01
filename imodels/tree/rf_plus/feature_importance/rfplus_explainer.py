@@ -141,11 +141,11 @@ class RFPlusLime(_RandomForestPlusExplainer):
         
 class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out 
 
-    def __init__(self, rf_plus_model,mode = 'keep_k', evaluate_on = 'oob'):
+    def __init__(self, rf_plus_model,mode = 'keep_k'): #evaluate_on only used for training FI 
         self.rf_plus_model = rf_plus_model
         self.mode = mode
         self.oob_indices = self.rf_plus_model._oob_indices
-        self.evaluate_on = evaluate_on #training feature importances 
+        #self.evaluate_on = evaluate_on #training feature importances 
 
         if self.rf_plus_model._task == "classification":
             self.tree_explainers = [MDIPlusGenericClassifierPPM(rf_plus_model.estimators_[i]) 
@@ -153,11 +153,13 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             self.metrics = per_sample_neg_log_loss
         else:
             self.tree_explainers = [MDIPlusGenericRegressorPPM(rf_plus_model.estimators_[i]) 
-                                    for i in range(len(rf_plus_model.estimators_))]
+                                    for i in range(len(rf_plus_model.estimators_))] 
             self.metrics = per_sample_neg_mean_absolute_error
+                   
+        self.num_trees = len(rf_plus_model.estimators_)
         
 
-    def explain(self, X,y = None):
+    def explain(self, X,y = None, evaluate_on = 'oob'):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
@@ -166,30 +168,29 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         partial_preds = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         local_feature_importances[local_feature_importances == 0] = np.nan
         partial_preds[partial_preds == 0] = np.nan
-     
-        # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
         all_tree_LFI_scores,all_tree_full_preds = self._get_LFI(X,y)
-        
+
         if y is None:
-            y = all_tree_full_preds 
+            y, compute_train_importance = all_tree_full_preds, True
             evaluate_on = None
         else:
-            y = np.hstack([y.reshape(-1,1) for _ in range(len(self.tree_explainers))])
-            evaluate_on = self.evaluate_on
+            y, compute_train_importance = np.hstack([y.reshape(-1,1) for _ in range(len(self.tree_explainers))]), False
         
         for i in range(all_tree_full_preds.shape[1]):
-            ith_partial_preds = all_tree_LFI_scores[:,:,i] #partial prediction for tree i 
-            ith_tree_scores = self.metrics(y[:,i],ith_partial_preds) #error metric between y and ith partial prediction
+            ith_tree_scores, ith_partial_preds = self._get_ith_tree_scores(y,all_tree_LFI_scores,i,compute_train_importance)
+
             if evaluate_on == 'oob':
                 oob_indices = np.unique(self.oob_indices[i])
                 local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
                 partial_preds[oob_indices,:,i] = ith_partial_preds[oob_indices,:]
+
             elif evaluate_on == 'inbag':
                 oob_indices = np.unique(self.oob_indices[i])
                 inbag_indices = np.arange(X.shape[0])
                 inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
                 local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
                 partial_preds[inbag_indices,:,i] = ith_partial_preds[inbag_indices,:]
+
             else:
                 local_feature_importances[:,:,i] = ith_tree_scores
                 partial_preds[:,:,i] = ith_partial_preds
@@ -197,8 +198,18 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
         partial_preds = np.nanmean(partial_preds,axis=-1)
         return local_feature_importances, partial_preds
-              
-    def _get_LFI(self, X,y):
+    
+    def _get_ith_tree_scores(self,y,all_tree_LFI_scores,i,compute_train_importance):
+        ith_partial_preds = all_tree_LFI_scores[:,:,i]
+        if (self.rf_plus_model._task == "classification") and (not compute_train_importance):
+            metric = per_sample_neg_mean_absolute_error
+        else:
+            metric = self.metrics
+        ith_tree_scores = metric(y[:,i],ith_partial_preds)
+        return ith_tree_scores, ith_partial_preds
+
+                  
+    def _get_LFI(self,X,y):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         full_preds = np.zeros((X.shape[0],len(self.tree_explainers)))
         for i, tree_explainer in enumerate(self.tree_explainers):
@@ -272,7 +283,7 @@ if __name__ == "__main__":
     local_feature_importances, partial_preds = rf_plus_mdi.explain(X_test[:40])
     pprint.pprint(rf_plus_mdi.get_rankings(local_feature_importances,f))
 
-    print(f"LFIs have shape: {local_feature_importances.shape}") #Should have shape 50, X.shape[1], num trees
+    print(f"LFIs have shape: {local_feature_importances.shape}") #Should have shape 40, X.shape[1], num trees
     
 
     #Run RFPlusKernelSHAP and RFPlusLime
