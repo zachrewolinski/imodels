@@ -93,10 +93,10 @@ class RFPlusKernelSHAP(_RandomForestPlusExplainer):
         else: #assume we are explaining test set
             shap_values = ex.shap_values(X_test,l1_reg = num_features)
 
-        if self.task == "classification":
-            shap_values = np.sum(np.abs(shap_values),axis=-1)
-        else:
-            shap_values = abs(shap_values)
+        # if self.task == "classification":
+        #     shap_values = np.sum(np.abs(shap_values),axis=-1)
+        # else:
+        #     shap_values = shap_values #abs(shap_values)
         return shap_values
     
 class RFPlusLime(_RandomForestPlusExplainer):
@@ -130,12 +130,11 @@ class RFPlusLime(_RandomForestPlusExplainer):
             original_feature_importance = exp.as_map()[1]
             sorted_feature_importance = sorted(original_feature_importance,key = lambda x: x[0])
             for j in range(num_features):
-                result[i,j] = abs(sorted_feature_importance[j][1])
-        
+                result[i,j] = sorted_feature_importance[j][1] #abs(sorted_feature_importance[j][1])
         
         # Convert the array to a DataFrame
         lime_values = pd.DataFrame(result, columns=[f'Feature_{i}' for i in range(num_features)])
-        lime_values = abs(lime_values)
+        lime_values = lime_values #abs(lime_values)
         
         return lime_values
         
@@ -150,11 +149,13 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         if self.rf_plus_model._task == "classification":
             self.tree_explainers = [MDIPlusGenericClassifierPPM(rf_plus_model.estimators_[i]) 
                                     for i in range(len(rf_plus_model.estimators_))]
-            self.metrics = per_sample_neg_log_loss
+            self.train_metrics = per_sample_neg_log_loss
+            self.test_metrics = per_sample_neg_mean_absolute_error
         else:
             self.tree_explainers = [MDIPlusGenericRegressorPPM(rf_plus_model.estimators_[i]) 
                                     for i in range(len(rf_plus_model.estimators_))]
-            self.metrics = per_sample_neg_mean_absolute_error
+            self.train_metrics = per_sample_neg_mean_absolute_error
+            self.test_metrics = per_sample_neg_mean_absolute_error
         
 
     def explain(self, X,y = None):
@@ -173,13 +174,15 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         if y is None:
             y = all_tree_full_preds
             evaluate_on = None
+            metric = self.test_metrics
         else:
             y = np.hstack([y.reshape(-1,1) for _ in range(len(self.tree_explainers))])
             evaluate_on = self.evaluate_on
+            metric = self.train_metrics
         
         for i in range(all_tree_full_preds.shape[1]):
             ith_partial_preds = all_tree_LFI_scores[:,:,i]
-            ith_tree_scores = self.metrics(y[:,i],ith_partial_preds)
+            ith_tree_scores = metric(y[:,i],ith_partial_preds)
             if evaluate_on == 'oob':
                 oob_indices = np.unique(self.oob_indices[i])
                 local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
@@ -197,6 +200,39 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
         partial_preds = np.nanmean(partial_preds,axis=-1)
         return local_feature_importances, partial_preds
+    
+    def explain_subtract_intercept(self, X,y = None):
+        """
+        If y is None, return the local feature importance scores for X. 
+        If y is not None, assume X is FULL training set
+        """
+        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) #partial predictions for each sample  
+        local_feature_importances[local_feature_importances == 0] = np.nan
+     
+        # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
+        all_tree_LFI_scores = self._get_LFI_subtract_intercept(X,y)
+        
+        if y is None:
+            evaluate_on = None
+        else:
+            evaluate_on = self.evaluate_on
+        
+        for i in range(all_tree_LFI_scores.shape[-1]):
+            ith_partial_preds = all_tree_LFI_scores[:,:,i]
+            ith_tree_scores = ith_partial_preds
+            if evaluate_on == 'oob':
+                oob_indices = np.unique(self.oob_indices[i])
+                local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
+            elif evaluate_on == 'inbag':
+                oob_indices = np.unique(self.oob_indices[i])
+                inbag_indices = np.arange(X.shape[0])
+                inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
+                local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
+            else:
+                local_feature_importances[:,:,i] = ith_tree_scores
+        
+        local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
+        return local_feature_importances
               
     def _get_LFI(self, X,y):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
@@ -208,6 +244,15 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             LFIs[:,:,i] = ith_partial_preds
             full_preds[:,i] = tree_explainer.predict_full(blocked_data_ith_tree)
         return LFIs, full_preds
+    
+    def _get_LFI_subtract_intercept(self, X,y):
+        LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        for i, tree_explainer in enumerate(self.tree_explainers):
+            blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
+            ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode)
+            ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
+            LFIs[:,:,i] = ith_partial_preds
+        return LFIs
 
        
 class AloRFPlusMDI(RFPlusMDI): #Leave one out 
@@ -221,14 +266,19 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
         if self.rf_plus_model._task == "classification":
             self.tree_explainers = [AloMDIPlusPartialPredictionModelClassifier(rf_plus_model.estimators_[i]) 
                                     for i in range(len(rf_plus_model.estimators_))]
-            self.metrics = per_sample_neg_log_loss
+            self.train_metrics = per_sample_neg_log_loss
+            self.test_metrics = per_sample_neg_mean_absolute_error
         else:
             self.tree_explainers = [AloMDIPlusPartialPredictionModelRegressor(rf_plus_model.estimators_[i]) 
                                     for i in range(len(rf_plus_model.estimators_))]
-            self.metrics = per_sample_neg_mean_absolute_error
+            self.train_metrics = per_sample_neg_mean_absolute_error
+            self.test_metrics = per_sample_neg_mean_absolute_error
         
     def explain(self, X,y = None):
         return super().explain(X,y)
+    
+    def explain_subtract_intercept(self, X,y = None):
+        return super().explain_subtract_intercept(X,y)
 
     def _get_LFI(self,X,y):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
@@ -236,8 +286,8 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
             if y is None:
-               ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode)
-               full_preds[:,i] = tree_explainer.predict_full(blocked_data_ith_tree)
+                ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode)
+                full_preds[:,i] = tree_explainer.predict_full(blocked_data_ith_tree)
             else:
                 ith_partial_preds = tree_explainer.predict_partial_loo(blocked_data_ith_tree, mode=self.mode)
                 full_preds[:,i] = tree_explainer.predict_full_loo(blocked_data_ith_tree)
@@ -246,6 +296,17 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
 
         return LFIs, full_preds
 
+    def _get_LFI_subtract_intercept(self,X,y):
+        LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        for i, tree_explainer in enumerate(self.tree_explainers):
+            blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
+            if y is None:
+                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode)
+            else:
+                ith_partial_preds = tree_explainer.predict_partial_loo_subtract_intercept(blocked_data_ith_tree, mode=self.mode)
+            ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
+            LFIs[:,:,i] = ith_partial_preds
+        return LFIs
 
 
 
@@ -254,38 +315,27 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
         
 if __name__ == "__main__":
 
-    #Test Regression
-
-    #Load  Regression
-    X, y, f = imodels.get_clean_dataset("")
+    X, y, f = imodels.get_clean_dataset("diabetes")
+    pprint.pprint(f"X Shape: {X.shape}")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
+
     # Fit a RFPlus model
-    rf_model = RandomForestRegressor(n_estimators=10, min_samples_leaf=5, random_state=42)
-    rf_plus_model = RandomForestPlusRegressor(rf_model = rf_model)
+    rf_model = RandomForestClassifier(n_estimators=100, min_samples_leaf=3,max_features='sqrt', random_state=42)
+    
+    rf_plus_model = RandomForestPlusClassifier(rf_model = rf_model)
     rf_plus_model.fit(X_train[:100], y_train[:100])
 
-    pprint.pprint("Fitted RFPlus Model")
-
     #Test MDI
-    rf_plus_mdi = AloRFPlusMDI(rf_plus_model)
+    rf_plus_mdi = AloRFPlusMDI(rf_plus_model, evaluate_on="all")
     local_feature_importances, partial_preds = rf_plus_mdi.explain(X_test[:40])
     pprint.pprint(rf_plus_mdi.get_rankings(local_feature_importances,f))
 
-    print(f"LFIs have shape: {local_feature_importances.shape}") #Should have shape 50, X.shape[1], num trees
-    
-
-    #Run RFPlusKernelSHAP and RFPlusLime
-    pprint.pprint("Running RFPlusKernelSHAP")
-    rf_plus_kernel_shap = RFPlusKernelSHAP(rf_plus_model)
-    shap_values = rf_plus_kernel_shap.explain(X_train, X_test[:40])
-    pprint.pprint(rf_plus_kernel_shap.get_rankings(shap_values,f))
-
-    pprint.pprint("Running RFPlusLime")
-    rf_plus_lime = RFPlusLime(rf_plus_model)
-    lime_values = rf_plus_lime.explain(X_train[:100], X_test[:40])
-    pprint.pprint(lime_values.shape)
-    pprint.pprint("RFPlusLime done")
+    rf_plus_model = RandomForestPlusClassifier(rf_model = rf_model, fit_on="oob")
+    rf_plus_model.fit(X_train[:100], y_train[:100])
 
 
+    rf_plus_mdi = AloRFPlusMDI(rf_plus_model, evaluate_on="all")
+    local_feature_importances, partial_preds = rf_plus_mdi.explain(X_test[:40])
+    pprint.pprint(rf_plus_mdi.get_rankings(local_feature_importances,f))
 
