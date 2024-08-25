@@ -233,7 +233,43 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
         return local_feature_importances
-              
+
+
+    def explain_subtract_constant(self, X, constant, y = None):
+        """
+        If y is None, return the local feature importance scores for X. 
+        If y is not None, assume X is FULL training set
+        """
+        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) #partial predictions for each sample  
+        local_feature_importances[local_feature_importances == 0] = np.nan
+     
+        # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
+        all_tree_LFI_scores = self._get_LFI_subtract_constant(X,constant,y)
+        
+        if y is None:
+            evaluate_on = None
+        else:
+            evaluate_on = self.evaluate_on
+        
+        for i in range(all_tree_LFI_scores.shape[-1]):
+            ith_partial_preds = all_tree_LFI_scores[:,:,i]
+            ith_tree_scores = ith_partial_preds
+            if evaluate_on == 'oob':
+                oob_indices = np.unique(self.oob_indices[i])
+                local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
+            elif evaluate_on == 'inbag':
+                oob_indices = np.unique(self.oob_indices[i])
+                inbag_indices = np.arange(X.shape[0])
+                inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
+                local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
+            else:
+                local_feature_importances[:,:,i] = ith_tree_scores
+        
+        local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
+        return local_feature_importances
+
+
+
     def _get_LFI(self, X,y):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         full_preds = np.zeros((X.shape[0],len(self.tree_explainers)))
@@ -250,6 +286,15 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
             ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode)
+            ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
+            LFIs[:,:,i] = ith_partial_preds
+        return LFIs
+
+    def _get_LFI_subtract_constant(self, X, constant, y):
+        LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        for i, tree_explainer in enumerate(self.tree_explainers):
+            blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
+            ith_partial_preds = tree_explainer.predict_partial_subtract_constant(blocked_data_ith_tree, constant,mode=self.mode)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
         return LFIs
@@ -280,6 +325,9 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
     def explain_subtract_intercept(self, X,y = None):
         return super().explain_subtract_intercept(X,y)
 
+    def explain_subtract_constant(self, X, constant, y=None):
+        return super().explain_subtract_constant(X, constant, y)
+
     def _get_LFI(self,X,y):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         full_preds = np.zeros((X.shape[0],len(self.tree_explainers)))
@@ -307,7 +355,19 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
         return LFIs
+    
 
+    def _get_LFI_subtract_constant(self, X, constant, y):
+        LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        for i, tree_explainer in enumerate(self.tree_explainers):
+            blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
+            if y is None:
+                ith_partial_preds = tree_explainer.predict_partial_subtract_constant(blocked_data_ith_tree, constant, mode=self.mode)
+            else:
+                ith_partial_preds = tree_explainer.predict_partial_subtract_constant(blocked_data_ith_tree, constant, mode=self.mode)
+            ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
+            LFIs[:,:,i] = ith_partial_preds
+        return LFIs
 
 
             

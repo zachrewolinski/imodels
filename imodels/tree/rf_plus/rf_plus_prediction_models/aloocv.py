@@ -99,7 +99,6 @@ class AloGLM():
          
     def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-5):
         #Assume we are solving 1/n l_i + lambda * r
-       
         all_support_idxs = {}
         X1 = np.hstack([X, np.ones((X.shape[0], 1))])
         n = X1.shape[0]
@@ -121,7 +120,6 @@ class AloGLM():
             X1_support = X1[:, support_idxs_lambda_]
             
             if tuple(support_idxs_lambda_) not in all_support_idxs:
-
                 u,s,vh =  linalg.svd(X1_support,full_matrices=False)  
                 us = u * s
                 ush = us.T
@@ -143,7 +141,8 @@ class AloGLM():
             l_dot_vals = (self.l_dot(y, orig_preds) * sample_weight)/ n         
             loo_preds = orig_preds + h_vals * l_dot_vals / (1 - h_vals)
 
-            
+            if np.isnan(loo_preds).any():
+                continue
             sample_scores = self.hyperparameter_scorer(y, loo_preds)
 
             if sample_scores < best_cv_:

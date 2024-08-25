@@ -130,6 +130,18 @@ class _MDIPlusGenericPPM(_MDIPlusPartialPredictionModelBase, ABC):
                 partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode)
         return partial_preds
 
+    def predict_partial_subtract_constant(self, blocked_data, constant, mode, zero_values=None):
+        n_blocks = blocked_data.n_blocks
+        partial_preds = {}
+        for k in range(n_blocks):
+            if zero_values is not None:
+                partial_preds[k] = self.predict_partial_k_subtract_constant(blocked_data, k, mode, constant, zero_value=zero_values[k])
+            else:
+                partial_preds[k] = self.predict_partial_k_subtract_constant(blocked_data, k, mode, constant)
+        return partial_preds
+
+
+
 class MDIPlusGenericRegressorPPM(_MDIPlusGenericPPM, ABC):
     """
     Partial prediction model for arbitrary regression estimators. May be slow.
@@ -137,6 +149,11 @@ class MDIPlusGenericRegressorPPM(_MDIPlusGenericPPM, ABC):
     def predict_partial_k_subtract_intercept(self, blocked_data, k, mode):
         modified_data = blocked_data.get_modified_data(k, mode)
         return self.estimator.predict(modified_data) - self.estimator.intercept_
+    
+    def predict_partial_k_subtract_constant(self, blocked_data, k, mode, constant):
+        modified_data = blocked_data.get_modified_data(k, mode)
+        return self.estimator.predict(modified_data) - constant
+
 
 class MDIPlusGenericClassifierPPM(_MDIPlusGenericPPM, ABC):
     """
@@ -156,6 +173,11 @@ class MDIPlusGenericClassifierPPM(_MDIPlusGenericPPM, ABC):
         log_odds = np.log(probabilities / (1 - probabilities))
         return log_odds - self.estimator.intercept_
 
+    def predict_partial_k_subtract_constant(self, blocked_data, k, mode, constant):
+        modified_data = blocked_data.get_modified_data(k, mode)
+        probabilities = self.estimator.predict_proba(modified_data)[:, 1]
+        log_odds = np.log(probabilities / (1 - probabilities))
+        return log_odds - constant
 
 class AloMDIPlusPartialPredictionModelRegressor(_MDIPlusGenericPPM,AloGLMRegressor):
     '''
@@ -191,6 +213,20 @@ class AloMDIPlusPartialPredictionModelRegressor(_MDIPlusGenericPPM,AloGLMRegress
             partial_preds[k] = self.predict_partial_k_loo_subtract_intercept(blocked_data, k, mode)
         return partial_preds
     
+    def predict_partial_k_subtract_constant(self, blocked_data, k, mode, constant):
+        modified_data = blocked_data.get_modified_data(k, mode)
+        return self.estimator.predict(modified_data) - constant
+    
+    def predict_partial_k_loo_subtract_constant(self, blocked_data, k, mode, constant):
+        modified_data = blocked_data.get_modified_data(k, mode)
+        return self.estimator.predict_loo(modified_data) - constant
+    
+    def predict_partial_loo_subtract_constant(self, blocked_data, constant, mode):
+        n_blocks = blocked_data.n_blocks
+        partial_preds = {}
+        for k in range(n_blocks):
+            partial_preds[k] = self.predict_partial_k_loo_subtract_constant(blocked_data, k, mode, constant)
+        return partial_preds
 
 class AloMDIPlusPartialPredictionModelClassifier(_MDIPlusGenericPPM,AloGLMClassifier):
     
@@ -239,6 +275,25 @@ class AloMDIPlusPartialPredictionModelClassifier(_MDIPlusGenericPPM,AloGLMClassi
         partial_preds = {}
         for k in range(n_blocks):
             partial_preds[k] = self.predict_partial_k_loo_subtract_intercept(blocked_data, k, mode)
+        return partial_preds
+    
+    def predict_partial_k_subtract_constant(self, blocked_data, k, mode, constant):
+        modified_data = blocked_data.get_modified_data(k, mode)
+        probabilities = self.estimator.predict_proba(modified_data)[:, 1]
+        log_odds = np.log(probabilities / (1 - probabilities))
+        return log_odds - constant
+    
+    def predict_partial_k_loo_subtract_constant(self, blocked_data, k, mode, constant):
+        modified_data = blocked_data.get_modified_data(k, mode)
+        probabilities = self.estimator.predict_proba_loo(modified_data)[:, 1]
+        log_odds = np.log(probabilities / (1 - probabilities))
+        return log_odds - constant
+    
+    def predict_partial_loo_subtract_constant(self, blocked_data, constant, mode):
+        n_blocks = blocked_data.n_blocks
+        partial_preds = {}
+        for k in range(n_blocks):
+            partial_preds[k] = self.predict_partial_k_loo_subtract_constant(blocked_data, k, mode, constant)
         return partial_preds
 
     
