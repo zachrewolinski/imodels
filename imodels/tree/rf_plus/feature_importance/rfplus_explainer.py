@@ -355,7 +355,7 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
     def explain_subtract_intercept(self, X, y = None, leaf_average = False):
         return super().explain_subtract_intercept(X, y, leaf_average)
 
-    def explain_subtract_constant(self, X, constant, y=None):
+    def explain_subtract_constant(self, X, constant, y = None, leaf_average = False):
         return super().explain_subtract_constant(X, constant, y, leaf_average)
 
     def _get_LFI(self, X, y, leaf_average):
