@@ -225,7 +225,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         partial_preds = np.nanmean(partial_preds,axis=-1)
         return local_feature_importances, partial_preds
     
-    def explain_subtract_intercept(self, X,y = None):
+    def explain_subtract_intercept(self, X, y = None, leaf_average = False):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
@@ -234,7 +234,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         local_feature_importances[local_feature_importances == 0] = np.nan
      
         # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
-        all_tree_LFI_scores = self._get_LFI_subtract_intercept(X,y)
+        all_tree_LFI_scores = self._get_LFI_subtract_intercept(X,y,leaf_average)
         
         if y is None:
             evaluate_on = None
@@ -259,7 +259,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         return local_feature_importances
 
 
-    def explain_subtract_constant(self, X, constant, y = None):
+    def explain_subtract_constant(self, X, constant, y = None, leaf_average = False):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
@@ -268,7 +268,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         local_feature_importances[local_feature_importances == 0] = np.nan
      
         # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
-        all_tree_LFI_scores = self._get_LFI_subtract_constant(X,constant,y)
+        all_tree_LFI_scores = self._get_LFI_subtract_constant(X,constant,y,leaf_average)
         
         if y is None:
             evaluate_on = None
