@@ -39,7 +39,7 @@ def per_sample_neg_log_loss(y_true,y_pred,epsilon = 1e-4):
 
 def per_sample_neg_mean_absolute_error(y_true,y_pred):
     y_true = y_true.reshape(-1,1)   
-    return -1*np.abs(y_true - y_pred)
+    return -1*np.abs(y_true - y_pred)    
 
 class _RandomForestPlusExplainer():
 
@@ -62,6 +62,31 @@ class _RandomForestPlusExplainer():
             return rankings
         else:
             return pd.DataFrame(rankings, columns = feature_names)
+    
+    def average_per_leaf(self, X: np.ndarray, LFIs: np.ndarray) -> np.ndarray:
+        """
+        Averages MDI+ scores for each leaf in the RF model.
+
+        Args:
+            X (np.ndarray): the data we are computing importance scores for
+            LFIs (np.ndarray): the (unaveraged) local feature importance scores
+        """
+        
+        # get list of trees so we don't have to repetitively access
+        tree_lst = self.rf_plus_model.rf_model.estimators_
+        
+        # get leaf indices for each sample in each tree
+        for tree_idx in range(len(tree_lst)):
+            leaf_indices = tree_lst[tree_idx].apply(X)
+            leaf_to_samples = {}
+            for leaf in np.unique(leaf_indices):
+                leaf_to_samples[leaf] = np.where(leaf_indices == leaf)[0]
+            # average tree_lfis for each leaf
+            for leaf in leaf_to_samples.keys():
+                LFIs[leaf_to_samples[leaf], :, tree_idx] = np.mean(LFIs[leaf_to_samples[leaf], :, tree_idx], axis=0)
+            
+        return LFIs
+        
 
 class RFPlusKernelSHAP(_RandomForestPlusExplainer):
 
@@ -157,7 +182,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             self.metrics = per_sample_neg_mean_absolute_error
         
 
-    def explain(self, X,y = None):
+    def explain(self, X, y = None, leaf_average = False):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
@@ -168,7 +193,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         partial_preds[partial_preds == 0] = np.nan
      
         # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
-        all_tree_LFI_scores,all_tree_full_preds = self._get_LFI(X,y)
+        all_tree_LFI_scores,all_tree_full_preds = self._get_LFI(X,y,leaf_average)
         
         if y is None:
             y = all_tree_full_preds
@@ -198,7 +223,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         partial_preds = np.nanmean(partial_preds,axis=-1)
         return local_feature_importances, partial_preds
               
-    def _get_LFI(self, X,y):
+    def _get_LFI(self, X, y, leaf_average):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         full_preds = np.zeros((X.shape[0],len(self.tree_explainers)))
         for i, tree_explainer in enumerate(self.tree_explainers):
@@ -207,6 +232,8 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
             full_preds[:,i] = tree_explainer.predict_full(blocked_data_ith_tree)
+        if leaf_average:
+            LFIs = self.average_per_leaf(X, LFIs)
         return LFIs, full_preds
 
        
@@ -227,10 +254,10 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
                                     for i in range(len(rf_plus_model.estimators_))]
             self.metrics = per_sample_neg_mean_absolute_error
         
-    def explain(self, X,y = None):
-        return super().explain(X,y)
+    def explain(self, X, y = None, leaf_average = False):
+        return super().explain(X, y, leaf_average)
 
-    def _get_LFI(self,X,y):
+    def _get_LFI(self, X, y, leaf_average):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         full_preds = np.zeros((X.shape[0],len(self.tree_explainers)))
         for i, tree_explainer in enumerate(self.tree_explainers):
@@ -243,7 +270,8 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
                 full_preds[:,i] = tree_explainer.predict_full_loo(blocked_data_ith_tree)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
-
+        if leaf_average:
+            LFIs = self.average_per_leaf(X, LFIs)
         return LFIs, full_preds
 
 
