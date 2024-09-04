@@ -120,14 +120,14 @@ class _MDIPlusGenericPPM(_MDIPlusPartialPredictionModelBase, ABC):
         modified_data = blocked_data.get_modified_data(k, mode)
         return self.estimator.predict(modified_data)
     
-    def predict_partial_subtract_intercept(self, blocked_data, mode, zero_values=None):
+    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm=False, zero_values=None):
         n_blocks = blocked_data.n_blocks
         partial_preds = {}
         for k in range(n_blocks):
             if zero_values is not None:
-                partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, zero_value=zero_values[k])
+                partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm=l2norm, zero_value=zero_values[k])
             else:
-                partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode)
+                partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm=l2norm)
         return partial_preds
 
     def predict_partial_subtract_constant(self, blocked_data, constant, mode, zero_values=None):
@@ -146,8 +146,18 @@ class MDIPlusGenericRegressorPPM(_MDIPlusGenericPPM, ABC):
     """
     Partial prediction model for arbitrary regression estimators. May be slow.
     """
-    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode):
+    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode, l2norm):
         modified_data = blocked_data.get_modified_data(k, mode)
+        if l2norm:
+            coefs = self.estimator.coef_
+            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The full coefficient vector is: {coefs}")
+            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The modified data is: {modified_data}")
+            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The `predict` method's output is: {self.estimator.predict(modified_data)}")
+            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The inner product's output is: {modified_data @ coefs + self.estimator.intercept_}")
+            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. T/F - the `predict` method is equivalent to the inner product: {self.estimator.predict(modified_data) == modified_data @ coefs + self.estimator.intercept_}")
+            normed_results = ((modified_data**2) @ (coefs**2))**(1/2)
+            return normed_results
+            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The normed results are: {normed_results}")
         return self.estimator.predict(modified_data) - self.estimator.intercept_
     
     def predict_partial_k_subtract_constant(self, blocked_data, k, mode, constant):
