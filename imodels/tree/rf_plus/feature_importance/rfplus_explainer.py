@@ -182,7 +182,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             self.test_metrics = per_sample_neg_mean_absolute_error
         
 
-    def explain(self, X, y = None, leaf_average = False):
+    def explain(self, X, y = None, leaf_average = False, l2norm = False, sigmoid = False):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
@@ -193,7 +193,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         partial_preds[partial_preds == 0] = np.nan
      
         # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
-        all_tree_LFI_scores,all_tree_full_preds = self._get_LFI(X,y,leaf_average)
+        all_tree_LFI_scores,all_tree_full_preds = self._get_LFI(X, y, leaf_average, l2norm, sigmoid)
         
         if y is None:
             y = all_tree_full_preds
@@ -225,7 +225,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         partial_preds = np.nanmean(partial_preds,axis=-1)
         return local_feature_importances, partial_preds
     
-    def explain_subtract_intercept(self, X, y = None, leaf_average = False, l2norm = False):
+    def explain_subtract_intercept(self, X, y = None, leaf_average = False, l2norm = False, sigmoid = False):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
@@ -234,7 +234,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         local_feature_importances[local_feature_importances == 0] = np.nan
      
         # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
-        all_tree_LFI_scores = self._get_LFI_subtract_intercept(X,y,leaf_average,l2norm)
+        all_tree_LFI_scores = self._get_LFI_subtract_intercept(X, y, leaf_average, l2norm, sigmoid)
         
         if y is None:
             evaluate_on = None
@@ -254,52 +254,97 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
             else:
                 local_feature_importances[:,:,i] = ith_tree_scores
-        
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
         return local_feature_importances
-
-
-    def explain_subtract_constant(self, X, constant, y = None, leaf_average = False):
+    
+    def explain_r2(self, X, y = None, l2norm = False, sigmoid = False):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
         """
-        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) #partial predictions for each sample  
+        
+        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) # partial predictions for each sample  
         local_feature_importances[local_feature_importances == 0] = np.nan
-     
-        # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
-        all_tree_LFI_scores = self._get_LFI_subtract_constant(X,constant,y,leaf_average)
         
-        if y is None:
-            evaluate_on = None
+        obs_per_tree_per_leaf = {}
+        
+        if y is not None:
+            tree_lst = self.rf_plus_model.rf_model.estimators_
+            for tree_idx in range(len(tree_lst)):
+                leaf_indices = tree_lst[tree_idx].apply(X)
+                leaf_to_samples = {}
+                for leaf in np.unique(leaf_indices):
+                    leaf_to_samples[leaf] = np.where(leaf_indices == leaf)[0]
+                obs_per_tree_per_leaf[tree_idx] = leaf_to_samples
+        
+            all_tree_partial_preds, _ = self._get_LFI(X, y, leaf_average = False, l2norm = l2norm, sigmoid = sigmoid)
+            
+            for tree_idx in range(all_tree_partial_preds.shape[2]):
+                for leaf in obs_per_tree_per_leaf[tree_idx].keys():
+                    for feat_idx in range(X.shape[1]):
+                        local_feature_importances[obs_per_tree_per_leaf[tree_idx][leaf], feat_idx, tree_idx] = r2_score(y[obs_per_tree_per_leaf[tree_idx][leaf]], all_tree_partial_preds[obs_per_tree_per_leaf[tree_idx][leaf], feat_idx, tree_idx])
+            print(local_feature_importances)
+            self.train_feature_importances = local_feature_importances
         else:
-            evaluate_on = self.evaluate_on
-        
-        for i in range(all_tree_LFI_scores.shape[-1]):
-            ith_partial_preds = all_tree_LFI_scores[:,:,i]
-            ith_tree_scores = ith_partial_preds
-            if evaluate_on == 'oob':
-                oob_indices = np.unique(self.oob_indices[i])
-                local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
-            elif evaluate_on == 'inbag':
-                oob_indices = np.unique(self.oob_indices[i])
-                inbag_indices = np.arange(X.shape[0])
-                inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
-                local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
-            else:
-                local_feature_importances[:,:,i] = ith_tree_scores
-        
-        local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
+            tree_lst = self.rf_plus_model.rf_model.estimators_
+            for tree_idx in range(len(tree_lst)):
+                leaf_indices = tree_lst[tree_idx].apply(X)
+                leaf_to_samples = {}
+                for leaf in np.unique(leaf_indices):
+                    leaf_to_samples[leaf] = np.where(leaf_indices == leaf)[0]
+                obs_per_tree_per_leaf[tree_idx] = leaf_to_samples
+            for tree_idx in self.train_feature_importances.shape[2]:
+                for leaf in obs_per_tree_per_leaf[tree_idx].keys():
+                    local_feature_importances[obs_per_tree_per_leaf[tree_idx][leaf], :, tree_idx] = self.train_feature_importances[obs_per_tree_per_leaf[tree_idx][leaf], :, tree_idx]
+                        
+        local_feature_importances = np.nanmean(local_feature_importances, axis=-1)
+                    
         return local_feature_importances
+
+        
+
+
+    # def explain_subtract_constant(self, X, constant, y = None, leaf_average = False):
+    #     """
+    #     If y is None, return the local feature importance scores for X. 
+    #     If y is not None, assume X is FULL training set
+    #     """
+    #     local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) #partial predictions for each sample  
+    #     local_feature_importances[local_feature_importances == 0] = np.nan
+     
+    #     # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
+    #     all_tree_LFI_scores = self._get_LFI_subtract_constant(X,constant,y,leaf_average)
+        
+    #     if y is None:
+    #         evaluate_on = None
+    #     else:
+    #         evaluate_on = self.evaluate_on
+        
+    #     for i in range(all_tree_LFI_scores.shape[-1]):
+    #         ith_partial_preds = all_tree_LFI_scores[:,:,i]
+    #         ith_tree_scores = ith_partial_preds
+    #         if evaluate_on == 'oob':
+    #             oob_indices = np.unique(self.oob_indices[i])
+    #             local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
+    #         elif evaluate_on == 'inbag':
+    #             oob_indices = np.unique(self.oob_indices[i])
+    #             inbag_indices = np.arange(X.shape[0])
+    #             inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
+    #             local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
+    #         else:
+    #             local_feature_importances[:,:,i] = ith_tree_scores
+        
+    #     local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
+    #     return local_feature_importances
 
 
     # remove y as input, since we don't use
-    def _get_LFI(self, X, y, leaf_average):
+    def _get_LFI(self, X, y, leaf_average, l2norm, sigmoid):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         full_preds = np.zeros((X.shape[0],len(self.tree_explainers)))
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
-            ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode)
+            ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode, l2norm = l2norm, sigmoid = sigmoid)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
             full_preds[:,i] = tree_explainer.predict_full(blocked_data_ith_tree)
@@ -307,27 +352,27 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             LFIs = self.average_per_leaf(X, LFIs)
         return LFIs, full_preds
     
-    def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm):
+    def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm, sigmoid):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
-            ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode, l2norm=l2norm)
+            ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode, l2norm=l2norm, sigmoid=sigmoid)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
         if leaf_average:
             LFIs = self.average_per_leaf(X, LFIs)
         return LFIs
 
-    def _get_LFI_subtract_constant(self, X, constant, y, leaf_average):
-        LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
-        for i, tree_explainer in enumerate(self.tree_explainers):
-            blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
-            ith_partial_preds = tree_explainer.predict_partial_subtract_constant(blocked_data_ith_tree, constant,mode=self.mode)
-            ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
-            LFIs[:,:,i] = ith_partial_preds
-        if leaf_average:
-            LFIs = self.average_per_leaf(X, LFIs)
-        return LFIs
+    # def _get_LFI_subtract_constant(self, X, constant, y, leaf_average):
+    #     LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+    #     for i, tree_explainer in enumerate(self.tree_explainers):
+    #         blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
+    #         ith_partial_preds = tree_explainer.predict_partial_subtract_constant(blocked_data_ith_tree, constant,mode=self.mode)
+    #         ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
+    #         LFIs[:,:,i] = ith_partial_preds
+    #     if leaf_average:
+    #         LFIs = self.average_per_leaf(X, LFIs)
+    #     return LFIs
 
        
 class AloRFPlusMDI(RFPlusMDI): #Leave one out 
@@ -349,25 +394,25 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
             self.train_metrics = per_sample_neg_mean_absolute_error
             self.test_metrics = per_sample_neg_mean_absolute_error
         
-    def explain(self, X, y = None, leaf_average = False):
-        return super().explain(X, y, leaf_average)
+    def explain(self, X, y = None, leaf_average = False, l2norm = False, sigmoid = False):
+        return super().explain(X, y, leaf_average, l2norm, sigmoid)
     
-    def explain_subtract_intercept(self, X, y = None, leaf_average = False):
-        return super().explain_subtract_intercept(X, y, leaf_average)
+    def explain_subtract_intercept(self, X, y = None, leaf_average = False, l2norm = False, sigmoid = False):
+        return super().explain_subtract_intercept(X, y, leaf_average, l2norm, sigmoid)
 
     def explain_subtract_constant(self, X, constant, y = None, leaf_average = False):
         return super().explain_subtract_constant(X, constant, y, leaf_average)
 
-    def _get_LFI(self, X, y, leaf_average):
+    def _get_LFI(self, X, y, leaf_average, l2norm, sigmoid):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         full_preds = np.zeros((X.shape[0],len(self.tree_explainers)))
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
             if y is None:
-                ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode)
+                ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode, l2norm = l2norm, sigmoid = sigmoid)
                 full_preds[:,i] = tree_explainer.predict_full(blocked_data_ith_tree)
             else:
-                ith_partial_preds = tree_explainer.predict_partial_loo(blocked_data_ith_tree, mode=self.mode)
+                ith_partial_preds = tree_explainer.predict_partial_loo(blocked_data_ith_tree, mode=self.mode, l2norm = l2norm, sigmoid = sigmoid)
                 full_preds[:,i] = tree_explainer.predict_full_loo(blocked_data_ith_tree)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
@@ -375,14 +420,14 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
             LFIs = self.average_per_leaf(X, LFIs)
         return LFIs, full_preds
 
-    def _get_LFI_subtract_intercept(self, X, y, leaf_average):
+    def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm, sigmoid):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
             if y is None:
-                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode)
+                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode, l2norm=l2norm, sigmoid=sigmoid)
             else:
-                ith_partial_preds = tree_explainer.predict_partial_loo_subtract_intercept(blocked_data_ith_tree, mode=self.mode)
+                ith_partial_preds = tree_explainer.predict_partial_loo_subtract_intercept(blocked_data_ith_tree, mode=self.mode, l2norm=l2norm, sigmoid=sigmoid)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
         if leaf_average:
@@ -390,19 +435,19 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
         return LFIs
     
 
-    def _get_LFI_subtract_constant(self, X, constant, y, leaf_average):
-        LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
-        for i, tree_explainer in enumerate(self.tree_explainers):
-            blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
-            if y is None:
-                ith_partial_preds = tree_explainer.predict_partial_subtract_constant(blocked_data_ith_tree, constant, mode=self.mode)
-            else:
-                ith_partial_preds = tree_explainer.predict_partial_subtract_constant(blocked_data_ith_tree, constant, mode=self.mode)
-            ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
-            LFIs[:,:,i] = ith_partial_preds
-        if leaf_average:
-            LFIs = self.average_per_leaf(X, LFIs)
-        return LFIs
+    # def _get_LFI_subtract_constant(self, X, constant, y, leaf_average):
+    #     LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+    #     for i, tree_explainer in enumerate(self.tree_explainers):
+    #         blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
+    #         if y is None:
+    #             ith_partial_preds = tree_explainer.predict_partial_subtract_constant(blocked_data_ith_tree, constant, mode=self.mode)
+    #         else:
+    #             ith_partial_preds = tree_explainer.predict_partial_subtract_constant(blocked_data_ith_tree, constant, mode=self.mode)
+    #         ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
+    #         LFIs[:,:,i] = ith_partial_preds
+    #     if leaf_average:
+    #         LFIs = self.average_per_leaf(X, LFIs)
+    #     return LFIs
 
 
             

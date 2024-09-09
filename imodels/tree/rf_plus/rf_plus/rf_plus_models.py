@@ -95,8 +95,7 @@ class _RandomForestPlus(BaseEstimator):
         self.estimators_ = []
         self._tree_random_states = []
         self.verbose = verbose
-        self._oob_indices = {}
-    
+        self._oob_indices = {}    
         
   
     def fit(self, X, y, sample_weight=None, n_jobs = -1,**kwargs):
@@ -135,8 +134,7 @@ class _RandomForestPlus(BaseEstimator):
         # check if self.rf_model has already been fit
         if not hasattr(self.rf_model, "estimators_"):
             self.rf_model.fit(X, y, sample_weight=sample_weight)
-        
-        
+                
         if n_jobs is None:
                 for i,tree_model in enumerate(self.rf_model.estimators_):
                     result = self._fit_ith_tree(tree_model,i,X_array,y,sample_weight,**kwargs)
