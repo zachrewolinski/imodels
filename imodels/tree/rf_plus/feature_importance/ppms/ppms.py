@@ -22,80 +22,72 @@ from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_regression import Alo
 from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_classification import AloGLMClassifier, AloLogisticElasticNetClassifierCV, AloSVCRidgeClassifier
 from imodels.tree.rf_plus.rf_plus.rf_plus_models import RandomForestPlusRegressor, RandomForestPlusClassifier
 from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
+from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv import AloGLM
 
 
-
-class _MDIPlusPartialPredictionModelBase(ABC):
+class MDIPlusGenericRegressorPPM(ABC):
     """
-    An interface for partial prediction models, objects that make use of a
-    block partitioned data object, fits a regression or classification model
-    on all the data, and for each block k, applies the model on a modified copy
-    of the data (by either imputing the mean of each feature in block k or
-    imputing the mean of each feature not in block k.)
-
-    Parameters
-    ----------
-    estimator: scikit estimator object
-        The regression or classification model used to obtain predictions.
-    assumes it is fitted.
+    Partial prediction model for arbitrary estimators. May be slow.
     """
 
     def __init__(self, estimator):
         self.estimator = copy.deepcopy(estimator)
-    
 
-    @abstractmethod
     def predict_full(self, blocked_data):
-        """
-        Make predictions using all the data based upon the fitted model.
-        Used to make full predictions in MDI+.
+        return self.estimator.predict(blocked_data.get_all_data())
+    
+    def predict_partial(self, blocked_data, mode, l2norm, zero_values=None):
+        n_blocks = blocked_data.n_blocks
+        partial_preds = {}
+        for k in range(n_blocks):
+            if zero_values is not None:
+                partial_preds[k] = self.predict_partial_k(blocked_data, k, mode, l2norm, zero_value=zero_values[k])
+            else:
+                partial_preds[k] = self.predict_partial_k(blocked_data, k, mode, l2norm)
+        return partial_preds
+    
+    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm, zero_values=None):
+        n_blocks = blocked_data.n_blocks
+        partial_preds = {}
+        for k in range(n_blocks):
+            if zero_values is not None:
+                partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm=l2norm, zero_value=zero_values[k])
+            else:
+                partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm=l2norm)
+        return partial_preds
+    
+    def predict_partial_k(self, blocked_data, k, mode, l2norm):
+        modified_data = blocked_data.get_modified_data(k, mode)
+        if l2norm:
+            if isinstance(self.estimator, AloGLM):
+                coefs = self.estimator.coefficients_
+            else:
+                coefs = self.estimator.coef_
+            return ((modified_data**2) @ (coefs**2))**(1/2) + self.estimator.intercept_
+        return self.estimator.predict(modified_data)
 
-        Parameters
-        ----------
-        blocked_data: BlockPartitionedData object
-            The block partitioned covariate data, for which to make predictions.
-        """
-        pass
+    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode, l2norm):
+        modified_data = blocked_data.get_modified_data(k, mode)
+        if l2norm:
+            if isinstance(self.estimator, AloGLM):
+                coefs = self.estimator.coefficients_
+            else:
+                coefs = self.estimator.coef_
+            return ((modified_data**2) @ (coefs**2))**(1/2)
+        return self.estimator.predict(modified_data) - self.estimator.intercept_
 
-    @abstractmethod
-    def predict_partial_k(self, blocked_data, k, mode, l2norm, sigmoid):
-        """
-        Make predictions on modified copies of the data based on the fitted model,
-        for a particular feature k of interest. Used to get partial predictions
-        for feature k in MDI+.
 
-        Parameters
-        ----------
-        blocked_data: BlockPartitionedData object
-            The block partitioned covariate data, for which to make predictions.
-        k: int
-            Index of feature in X of interest.
-        mode: string in {"keep_k", "keep_rest"}
-            Mode for the method. "keep_k" imputes the mean of each feature not
-            in block k, "keep_rest" imputes the mean of each feature in block k
-        """
-        pass
+class MDIPlusGenericClassifierPPM(ABC):
+    """
+    Partial prediction model for arbitrary classification estimators. May be slow.
+    """
+    def __init__(self, estimator):
+        self.estimator = copy.deepcopy(estimator)
 
-    def predict_partial(self, blocked_data, mode, l2norm, sigmoid = False, zero_values=None):
-        """
-        Make predictions on modified copies of the data based on the fitted model,
-        for each feature under study. Used to get partial predictions in MDI+.
-
-        Parameters
-        ----------
-        blocked_data: BlockPartitionedData object
-            The block partitioned covariate data, for which to make predictions.
-        mode: string in {"keep_k", "keep_rest"}
-            Mode for the method. "keep_k" imputes the mean of each feature not
-            in block k, "keep_rest" imputes the mean of each feature in block k
-        zero_values: ndarray of shape (n_features, ) representing the value of
-            each column that should be treated as a zero value. If None, then
-            we do not use these.
-
-        Returns
-        -------
-        List of length n_features of partial predictions for each feature.
-        """
+    def predict_full(self, blocked_data):
+        return self.estimator.predict_proba(blocked_data.get_all_data())[:,1]
+    
+    def predict_partial(self, blocked_data, mode, l2norm, sigmoid=False, zero_values=None):
         n_blocks = blocked_data.n_blocks
         partial_preds = {}
         for k in range(n_blocks):
@@ -104,26 +96,8 @@ class _MDIPlusPartialPredictionModelBase(ABC):
             else:
                 partial_preds[k] = self.predict_partial_k(blocked_data, k, mode, l2norm, sigmoid)
         return partial_preds
-
-class _MDIPlusGenericPPM(_MDIPlusPartialPredictionModelBase, ABC):
-    """
-    Partial prediction model for arbitrary estimators. May be slow.
-    """
-
-    def __init__(self, estimator):
-        super().__init__(estimator)
-
-    def predict_full(self, blocked_data):
-        return self.estimator.predict(blocked_data.get_all_data())
-
-    def predict_partial_k(self, blocked_data, k, mode, l2norm, sigmoid):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        if l2norm:
-            coefs = self.estimator.coef_
-            return ((modified_data**2) @ (coefs**2))**(1/2) + self.estimator.intercept_
-        return self.estimator.predict(modified_data)
     
-    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm=False, sigmoid=False, zero_values=None):
+    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm, sigmoid=False, zero_values=None):
         n_blocks = blocked_data.n_blocks
         partial_preds = {}
         for k in range(n_blocks):
@@ -132,60 +106,14 @@ class _MDIPlusGenericPPM(_MDIPlusPartialPredictionModelBase, ABC):
             else:
                 partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm=l2norm, sigmoid=sigmoid)
         return partial_preds
-
-
-    # TODO: REMOVE SUBTRACT CONSTANTS FROM FILE
-    def predict_partial_subtract_constant(self, blocked_data, constant, mode, zero_values=None):
-        n_blocks = blocked_data.n_blocks
-        partial_preds = {}
-        for k in range(n_blocks):
-            if zero_values is not None:
-                partial_preds[k] = self.predict_partial_k_subtract_constant(blocked_data, k, mode, constant, zero_value=zero_values[k])
-            else:
-                partial_preds[k] = self.predict_partial_k_subtract_constant(blocked_data, k, mode, constant)
-        return partial_preds
-
-
-
-class MDIPlusGenericRegressorPPM(_MDIPlusGenericPPM, ABC):
-    """
-    Partial prediction model for arbitrary regression estimators. May be slow.
-    """
-    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode, l2norm, sigmoid):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        if l2norm:
-            coefs = self.estimator.coef_
-            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The full coefficient vector is: {coefs}")
-            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The modified data is: {modified_data}")
-            # Find columns where all elements are within the tolerance level
-            close_to_zero_columns = np.all(np.abs(modified_data) < 0.01, axis=0)
-            # Get the indices of these columns
-            close_to_zero_column_indices = np.where(close_to_zero_columns)[0]
-            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The columns of the modified data that are zero are: {close_to_zero_column_indices}")
-            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The `predict` method's output is: {self.estimator.predict(modified_data)}")
-            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The inner product's output is: {modified_data @ coefs + self.estimator.intercept_}")
-            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. T/F - the `predict` method is equivalent to the inner product: {self.estimator.predict(modified_data) == modified_data @ coefs + self.estimator.intercept_}")
-            normed_results = ((modified_data**2) @ (coefs**2))**(1/2)
-            # print(f"In `predict_partial_k_subtract_intercept` within the MDIPlusGenericRegressorPPM Class. The normed results are: {normed_results}")
-            return normed_results
-        return self.estimator.predict(modified_data) - self.estimator.intercept_
-    # TODO: REMOVE SUBTRACT CONSTANTS FROM FILE
-    def predict_partial_k_subtract_constant(self, blocked_data, k, mode, constant):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        return self.estimator.predict(modified_data) - constant
-
-
-class MDIPlusGenericClassifierPPM(_MDIPlusGenericPPM, ABC):
-    """
-    Partial prediction model for arbitrary classification estimators. May be slow.
-    """
-
-    def predict_full(self, blocked_data):
-        return self.estimator.predict_proba(blocked_data.get_all_data())[:,1]
+    
 
     def predict_partial_k(self, blocked_data, k, mode, l2norm, sigmoid):
         modified_data = blocked_data.get_modified_data(k, mode)
-        coefs = self.estimator.coef_
+        if isinstance(self.estimator, AloGLM):
+            coefs = self.estimator.coefficients_
+        else:
+            coefs = self.estimator.coef_
         if l2norm:
             if sigmoid:
                 return expit(((modified_data**2) @ (coefs**2))**(1/2) + self.estimator.intercept_)
@@ -196,7 +124,10 @@ class MDIPlusGenericClassifierPPM(_MDIPlusGenericPPM, ABC):
     
     def predict_partial_k_subtract_intercept(self, blocked_data, k, mode, l2norm, sigmoid):
         modified_data = blocked_data.get_modified_data(k, mode)
-        coefs = self.estimator.coef_
+        if isinstance(self.estimator, AloGLM):
+            coefs = self.estimator.coefficients_
+        else:
+            coefs = self.estimator.coef_
         if l2norm:
             if sigmoid:
                 return expit(((modified_data**2) @ (coefs**2))**(1/2))
@@ -205,50 +136,57 @@ class MDIPlusGenericClassifierPPM(_MDIPlusGenericPPM, ABC):
             return  expit(modified_data @ coefs)
         return modified_data @ coefs
 
-    # TODO: REMOVE SUBTRACT CONSTANTS FROM FILE
-    def predict_partial_k_subtract_constant(self, blocked_data, k, mode, constant):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        probabilities = self.estimator.predict_proba(modified_data)[:, 1]
-        log_odds = np.log(probabilities / (1 - probabilities))
-        return log_odds - constant
 
-class AloMDIPlusPartialPredictionModelRegressor(_MDIPlusGenericPPM,AloGLMRegressor):
-    '''
+class AloMDIPlusPartialPredictionModelRegressor(MDIPlusGenericRegressorPPM,AloGLMRegressor):
+    """
     Assumes that the estimator has a loo_coefficients_ attribute.
-    '''
-    
-    def predict_partial_k_loo(self, blocked_data, k, mode, l2norm, sigmoid):
+    """
+
+    def predict_full_loo(self, blocked_data):
+        return self.estimator.predict_loo(blocked_data.get_all_data())
+
+    def predict_partial_loo(self, blocked_data, mode, l2norm):
+        n_blocks = blocked_data.n_blocks
+        partial_preds = {}
+        for k in range(n_blocks):
+            partial_preds[k] = self.predict_partial_k_loo(blocked_data, k, mode, l2norm)
+        return partial_preds
+
+    def predict_partial_loo_subtract_intercept(self, blocked_data, mode, l2norm):
+        n_blocks = blocked_data.n_blocks
+        partial_preds = {}
+        for k in range(n_blocks):
+            partial_preds[k] = self.predict_partial_k_loo_subtract_intercept(blocked_data, k, mode, l2norm)
+        return partial_preds
+
+    def predict_partial_k_loo(self, blocked_data, k, mode, l2norm):
         modified_data = blocked_data.get_modified_data(k, mode)
         if l2norm:
-            coefs = self.estimator.loo_coefficients_[:, :-1] # remove intercept
-            print(f"In `predict_partial_k_loo` within the AloMDIPlusPartialPredictionModelRegressor Class. The shape of the modified data is: {modified_data.shape}")
-            print(f"In `predict_partial_k_loo` within the AloMDIPlusPartialPredictionModelRegressor Class. The shape of the coefficients is: {coefs.shape}")
+            coefs = self.estimator.loo_coefficients_[:, :-1] 
             return np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1) + self.estimator.loo_coefficients_[:, -1]
         return self.estimator.predict_loo(modified_data)
    
+    def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, mode, l2norm):
+        modified_data = blocked_data.get_modified_data(k, mode)
+        if l2norm:
+            coefs = self.estimator.loo_coefficients_[:, :-1]
+            return np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1)
+        return self.estimator.predict_loo(modified_data) - self.estimator.loo_coefficients_[:, -1]
+    
+
+class AloMDIPlusPartialPredictionModelClassifier(MDIPlusGenericClassifierPPM,AloGLMClassifier):
+    """
+    Assumes that the estimator has a loo_coefficients_ attribute.
+    """    
+    def predict_full_loo(self, blocked_data):
+        return self.estimator.predict_proba_loo(blocked_data.get_all_data())[:,1]
+
     def predict_partial_loo(self, blocked_data, mode, l2norm, sigmoid):
         n_blocks = blocked_data.n_blocks
         partial_preds = {}
         for k in range(n_blocks):
             partial_preds[k] = self.predict_partial_k_loo(blocked_data, k, mode, l2norm, sigmoid)
         return partial_preds
-    
-    def predict_full_loo(self, blocked_data):
-        return self.estimator.predict_loo(blocked_data.get_all_data())
-    
-    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode, l2norm, sigmoid):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        if l2norm:
-            coefs = self.estimator.coefficients_
-            return ((modified_data**2) @ (coefs**2))**(1/2)
-        return self.estimator.predict(modified_data) - self.estimator.intercept_
-    
-    def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, mode, l2norm, sigmoid):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        if l2norm:
-            coefs = self.estimator.loo_coefficients_[:, :-1]
-            return np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1) + self.estimator.loo_coefficients_[:, -1]
-        return self.estimator.predict_loo(modified_data) - self.estimator.loo_coefficients_[:, -1]
     
     def predict_partial_loo_subtract_intercept(self, blocked_data, mode, l2norm, sigmoid):
         n_blocks = blocked_data.n_blocks
@@ -256,57 +194,7 @@ class AloMDIPlusPartialPredictionModelRegressor(_MDIPlusGenericPPM,AloGLMRegress
         for k in range(n_blocks):
             partial_preds[k] = self.predict_partial_k_loo_subtract_intercept(blocked_data, k, mode, l2norm, sigmoid)
         return partial_preds
-    
-    
-    # TODO: REMOVE SUBTRACT CONSTANTS FROM FILE
-    def predict_partial_k_subtract_constant(self, blocked_data, k, mode, constant):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        return self.estimator.predict(modified_data) - constant
-    
-    
-    # TODO: REMOVE SUBTRACT CONSTANTS FROM FILE
-    def predict_partial_k_loo_subtract_constant(self, blocked_data, k, mode, constant):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        return self.estimator.predict_loo(modified_data) - constant
-    
-    
-    # TODO: REMOVE SUBTRACT CONSTANTS FROM FILE
-    def predict_partial_loo_subtract_constant(self, blocked_data, constant, mode):
-        n_blocks = blocked_data.n_blocks
-        partial_preds = {}
-        for k in range(n_blocks):
-            partial_preds[k] = self.predict_partial_k_loo_subtract_constant(blocked_data, k, mode, constant)
-        return partial_preds
 
-class AloMDIPlusPartialPredictionModelClassifier(_MDIPlusGenericPPM,AloGLMClassifier):
-    '''
-    Assumes that the estimator has a loo_coefficients_ attribute.
-    '''
-    def predict_partial(self, blocked_data, mode, l2norm, sigmoid):
-        n_blocks = blocked_data.n_blocks
-        partial_preds = {}
-        for k in range(n_blocks):
-            partial_preds[k] = self.predict_partial_k(blocked_data, k, mode, l2norm, sigmoid)
-        return partial_preds
-    
-    def predict_partial_k(self, blocked_data, k, mode, l2norm, sigmoid):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        coefs = self.estimator.coefficients_
-        if l2norm:
-            if sigmoid:
-                return expit(((modified_data**2) @ (coefs**2))**(1/2) + self.estimator.intercept)
-            return ((modified_data**2) @ (coefs**2))**(1/2) + self.estimator.intercept
-        if sigmoid:
-            return self.estimator.predict_proba(modified_data)[:,1]
-        return modified_data @ coefs + self.estimator.intercept
-    
-    def predict_partial_loo(self, blocked_data, mode, l2norm, sigmoid):
-        n_blocks = blocked_data.n_blocks
-        partial_preds = {}
-        for k in range(n_blocks):
-            partial_preds[k] = self.predict_partial_k_loo(blocked_data, k, mode, l2norm, sigmoid)
-        return partial_preds
-    
     def predict_partial_k_loo(self, blocked_data, k, mode, l2norm, sigmoid):
         modified_data = blocked_data.get_modified_data(k, mode)
         coefs = self.estimator.loo_coefficients_[:, :-1]
@@ -318,9 +206,6 @@ class AloMDIPlusPartialPredictionModelClassifier(_MDIPlusGenericPPM,AloGLMClassi
             return self.estimator.predict_proba_loo(modified_data)[:,1]
         return np.sum((modified_data * coefs), axis = 1) + self.estimator.loo_coefficients_[:, -1]
     
-    def predict_full_loo(self, blocked_data):
-        return self.estimator.predict_proba_loo(blocked_data.get_all_data())[:,1]
-    
     def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, mode, l2norm, sigmoid):
         modified_data = blocked_data.get_modified_data(k, mode)
         coefs = self.estimator.loo_coefficients_[:, :-1]
@@ -331,47 +216,6 @@ class AloMDIPlusPartialPredictionModelClassifier(_MDIPlusGenericPPM,AloGLMClassi
         if sigmoid:
             return expit(np.sum(modified_data * coefs, axis = 1))
         return np.sum(modified_data * coefs, axis = 1)
-    
-    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode, l2norm, sigmoid):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        coefs = self.estimator.coefficients_
-        if l2norm:
-            if sigmoid:
-                return expit(((modified_data**2) @ (coefs**2))**(1/2))
-            return ((modified_data**2) @ (coefs**2))**(1/2)
-        if sigmoid:
-            return expit(modified_data @ coefs)
-        return modified_data @ coefs
-
-    def predict_partial_loo_subtract_intercept(self, blocked_data, mode, l2norm, sigmoid):
-        n_blocks = blocked_data.n_blocks
-        partial_preds = {}
-        for k in range(n_blocks):
-            partial_preds[k] = self.predict_partial_k_loo_subtract_intercept(blocked_data, k, mode, l2norm, sigmoid)
-        return partial_preds
-    
-    # TODO: remove subtract constants from file
-    def predict_partial_k_subtract_constant(self, blocked_data, k, mode, constant):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        probabilities = self.estimator.predict_proba(modified_data)[:, 1]
-        log_odds = np.log(probabilities / (1 - probabilities))
-        return log_odds - constant
-    # TODO: remove subtract constants from file
-    def predict_partial_k_loo_subtract_constant(self, blocked_data, k, mode, constant):
-        modified_data = blocked_data.get_modified_data(k, mode)
-        probabilities = self.estimator.predict_proba_loo(modified_data)[:, 1]
-        log_odds = np.log(probabilities / (1 - probabilities))
-        return log_odds - constant
-    
-    # TODO: remove subtract constants from file
-    def predict_partial_loo_subtract_constant(self, blocked_data, constant, mode):
-        n_blocks = blocked_data.n_blocks
-        partial_preds = {}
-        for k in range(n_blocks):
-            partial_preds[k] = self.predict_partial_k_loo_subtract_constant(blocked_data, k, mode, constant)
-        return partial_preds
-
-    
 
 if __name__ == "__main__":
     
@@ -389,8 +233,8 @@ if __name__ == "__main__":
         mdiplus_ppm = AloMDIPlusPartialPredictionModelRegressor(rfplus_reg.estimators_[i])
         train_blocked_data_i = rfplus_reg.transformers_[i].transform(X_train)
         test_blocked_data_i = rfplus_reg.transformers_[i].transform(X_test)
-        partial_loo_preds = mdiplus_ppm.predict_partial_loo(train_blocked_data_i,mode="keep_k")
-        partial_preds = mdiplus_ppm.predict_partial(test_blocked_data_i,mode="keep_k")
+        partial_loo_preds = mdiplus_ppm.predict_partial_loo(train_blocked_data_i,mode="keep_k",l2norm=False)
+        partial_preds = mdiplus_ppm.predict_partial(test_blocked_data_i,mode="keep_k", l2norm=False)
         print(f"Partial preds number of features: {len(partial_preds)}")
         print(f"Partial preds number of samples per feature: {len(partial_preds[0])}")
 
