@@ -172,6 +172,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         self.oob_indices = self.rf_plus_model._oob_indices
         self.evaluate_on = evaluate_on #training feature importances 
         self.saved_feature_importances_linear_partial = None
+        self.saved_feature_importances_r_2 = None
 
         if self.rf_plus_model._task == "classification":
             self.tree_explainers = [MDIPlusGenericClassifierPPM(rf_plus_model.estimators_[i]) 
@@ -278,43 +279,60 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
         """
+        if self.rf_plus_model.rf_model.min_samples_leaf <= 1:
+            raise ValueError("Need to set min_samples_leaf > 1")
         
-        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) # partial predictions for each sample  
+        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        all_tree_LFI_scores = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         local_feature_importances[local_feature_importances == 0] = np.nan
         
-        obs_per_tree_per_leaf = {}
-        
-        if y is not None:
-            tree_lst = self.rf_plus_model.rf_model.estimators_
-            for tree_idx in range(len(tree_lst)):
-                leaf_indices = tree_lst[tree_idx].apply(X)
-                leaf_to_samples = {}
-                for leaf in np.unique(leaf_indices):
-                    leaf_to_samples[leaf] = np.where(leaf_indices == leaf)[0]
-                obs_per_tree_per_leaf[tree_idx] = leaf_to_samples
-        
-            all_tree_partial_preds, _ = self._get_LFI(X, y, leaf_average = False, l2norm = l2norm)
-            
-            for tree_idx in range(all_tree_partial_preds.shape[2]):
-                for leaf in obs_per_tree_per_leaf[tree_idx].keys():
-                    for feat_idx in range(X.shape[1]):
-                        local_feature_importances[obs_per_tree_per_leaf[tree_idx][leaf], feat_idx, tree_idx] = r2_score(y[obs_per_tree_per_leaf[tree_idx][leaf]], all_tree_partial_preds[obs_per_tree_per_leaf[tree_idx][leaf], feat_idx, tree_idx])
-            print(local_feature_importances)
-            self.train_feature_importances = local_feature_importances
-        else:
-            tree_lst = self.rf_plus_model.rf_model.estimators_
-            for tree_idx in range(len(tree_lst)):
-                leaf_indices = tree_lst[tree_idx].apply(X)
-                leaf_to_samples = {}
-                for leaf in np.unique(leaf_indices):
-                    leaf_to_samples[leaf] = np.where(leaf_indices == leaf)[0]
-                obs_per_tree_per_leaf[tree_idx] = leaf_to_samples
-            for tree_idx in self.train_feature_importances.shape[2]:
-                for leaf in obs_per_tree_per_leaf[tree_idx].keys():
-                    local_feature_importances[obs_per_tree_per_leaf[tree_idx][leaf], :, tree_idx] = self.train_feature_importances[obs_per_tree_per_leaf[tree_idx][leaf], :, tree_idx]
-                        
-        local_feature_importances = np.nanmean(local_feature_importances, axis=-1)
-                    
+        if y is None:
+            if self.saved_feature_importances_r_2 is None:
+                raise ValueError("Need to run explain_linear_partial on training first")
+            else:
+                tree_lst = self.rf_plus_model.rf_model.estimators_
+                for tree_idx in range(len(tree_lst)):
+                    leaf_indices = tree_lst[tree_idx].apply(X)
+                    leaf_to_samples = {}
+                    for leaf in np.unique(leaf_indices):
+                        leaf_to_samples[leaf] = np.where(leaf_indices == leaf)[0]
+                    for leaf in leaf_to_samples.keys():
+                        local_feature_importances[leaf_to_samples[leaf], :, tree_idx] = self.saved_feature_importances_r_2[tree_idx][leaf]
+                return np.nanmean(local_feature_importances,axis=-1)
+
+        evaluate_on = self.evaluate_on
+        all_tree_partial_preds = self._get_LFI(X, y, leaf_average = False, l2norm = l2norm)
+        tree_lst = self.rf_plus_model.rf_model.estimators_
+        self.saved_feature_importances_r_2 = {}
+
+        for tree_idx in range(len(tree_lst)):
+            leaf_indices = tree_lst[tree_idx].apply(X)
+            leaf_to_samples = {}
+            self.saved_feature_importances_r_2[tree_idx] = {}
+            for leaf in np.unique(leaf_indices):
+                leaf_to_samples[leaf] = np.where(leaf_indices == leaf)[0]
+            for leaf in leaf_to_samples.keys():
+                r_square_array = np.zeros(X.shape[1])
+                for feature_idx in range(X.shape[1]):
+                    r_square = r2_score(y[leaf_to_samples[leaf]], all_tree_partial_preds[leaf_to_samples[leaf], feature_idx, tree_idx])
+                    r_square_array[feature_idx] = r_square
+                all_tree_LFI_scores[leaf_to_samples[leaf], :, tree_idx] = r_square_array
+                self.saved_feature_importances_r_2[tree_idx][leaf] = r_square_array
+
+        for i in range(all_tree_LFI_scores.shape[-1]):
+            ith_partial_preds = all_tree_LFI_scores[:,:,i]
+            ith_tree_scores = ith_partial_preds
+            if evaluate_on == 'oob':
+                oob_indices = np.unique(self.oob_indices[i])
+                local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
+            elif evaluate_on == 'inbag':
+                oob_indices = np.unique(self.oob_indices[i])
+                inbag_indices = np.arange(X.shape[0])
+                inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
+                local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
+            else:
+                local_feature_importances[:,:,i] = ith_tree_scores
+        local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
         return local_feature_importances
 
     # def _get_LFI_before(self, X, y, leaf_average, l2norm):
@@ -372,6 +390,7 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
         self.oob_indices = self.rf_plus_model._oob_indices
         self.evaluate_on = evaluate_on #training feature importances 
         self.saved_feature_importances_linear_partial = None
+        self.saved_feature_importances_r_2 = None
 
         if self.rf_plus_model._task == "classification":
             self.tree_explainers = [AloMDIPlusPartialPredictionModelClassifier(rf_plus_model.estimators_[i]) 
@@ -389,6 +408,9 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
     
     def explain_linear_partial(self, X, y = None, leaf_average = False, l2norm = False):
         return super().explain_linear_partial(X, y, leaf_average, l2norm)
+
+    def explain_r2(self, X, y = None, l2norm = False):
+        return super().explain_r2(X, y, l2norm)
 
     #Before
     # def _get_LFI(self, X, y, leaf_average, l2norm, sigmoid):
