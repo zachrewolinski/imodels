@@ -9,6 +9,7 @@ import pandas as pd
 from scipy.special import softmax, expit
 import time
 from tqdm import tqdm
+from joblib import Parallel, delayed
 
 # Sklearn imports
 from sklearn.linear_model import RidgeCV, Ridge, LogisticRegression, HuberRegressor, Lasso
@@ -46,15 +47,35 @@ class MDIPlusGenericRegressorPPM(ABC):
                 partial_preds[k] = self.predict_partial_k(blocked_data, k, mode, l2norm)
         return partial_preds
     
-    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm, zero_values=None):
+    # def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm, zero_values=None):
+    #     n_blocks = blocked_data.n_blocks
+    #     partial_preds = {}
+    #     for k in range(n_blocks):
+    #         if zero_values is not None:
+    #             partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm=l2norm, zero_value=zero_values[k])
+    #         else:
+    #             partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm=l2norm)
+    #     return partial_preds        
+    
+    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm, njobs = 1):
         n_blocks = blocked_data.n_blocks
-        partial_preds = {}
-        for k in range(n_blocks):
-            if zero_values is not None:
-                partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm=l2norm, zero_value=zero_values[k])
-            else:
-                partial_preds[k] = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm=l2norm)
-        return partial_preds
+        def predict_wrapper(k):
+            start_pred_k = time.time()
+            predict_k = self.predict_partial_k_subtract_intercept(blocked_data, k, mode, l2norm)
+            end_time_k = time.time()
+            return predict_k, end_time_k - start_pred_k
+        start_partial_preds = time.time()
+        # delayed makes sure that they go in the correct order
+        partial_preds = Parallel(n_jobs=njobs)(delayed(predict_wrapper)(k) for k in range(n_blocks))
+        end_partial_preds = time.time()
+        partial_pred_storage = {}
+        pred_times = []
+        for k in range(len(partial_preds)):
+            partial_pred_storage[k] = partial_preds[k][0]
+            pred_times.append(partial_preds[k][1])
+        self._partial_preds_time = np.array(pred_times)
+        self._total_partial_preds_time = end_partial_preds - start_partial_preds
+        return partial_pred_storage
     
     def predict_partial_k(self, blocked_data, k, mode, l2norm):
         modified_data = blocked_data.get_modified_data(k, mode)
@@ -72,6 +93,9 @@ class MDIPlusGenericRegressorPPM(ABC):
             if isinstance(self.estimator, AloGLM):
                 coefs = self.estimator.coefficients_
             else:
+                # check if self.estimator has been fit
+                if not hasattr(self.estimator, 'coef_'):
+                    print("Estimator has not been fit.")
                 coefs = self.estimator.coef_
             return ((modified_data**2) @ (coefs**2))**(1/2)
         return self.estimator.predict(modified_data) - self.estimator.intercept_
@@ -97,7 +121,7 @@ class MDIPlusGenericClassifierPPM(ABC):
                 partial_preds[k] = self.predict_partial_k(blocked_data, k, mode, l2norm, sigmoid)
         return partial_preds
     
-    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm, sigmoid=False, zero_values=None):
+    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm, sigmoid=False, zero_values=None, njobs = 1):
         n_blocks = blocked_data.n_blocks
         partial_preds = {}
         for k in range(n_blocks):
@@ -128,6 +152,8 @@ class MDIPlusGenericClassifierPPM(ABC):
             coefs = self.estimator.coefficients_
         else:
             coefs = self.estimator.coef_
+        if coefs.shape[0] != modified_data.shape[1]:
+            coefs = coefs.reshape(-1,1)
         if l2norm:
             if sigmoid:
                 return expit(((modified_data**2) @ (coefs**2))**(1/2))

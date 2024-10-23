@@ -5,6 +5,7 @@ from scipy.spatial.distance import pdist
 from functools import partial
 import copy
 import pprint
+import time
 
 # Sklearn imports
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
@@ -173,6 +174,8 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         self.evaluate_on = evaluate_on #training feature importances 
         self.saved_feature_importances_linear_partial = None
         self.saved_feature_importances_r_2 = None
+        
+        start_init_ppm = time.time()
 
         if self.rf_plus_model._task == "classification":
             self.tree_explainers = [MDIPlusGenericClassifierPPM(rf_plus_model.estimators_[i]) 
@@ -184,6 +187,9 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                                     for i in range(len(rf_plus_model.estimators_))]
             # self.train_metrics = per_sample_neg_mean_absolute_error
             # self.test_metrics = per_sample_neg_mean_absolute_error
+            
+        end_init_ppm = time.time()
+        self.init_ppm_time = end_init_ppm - start_init_ppm
         
 
     # def explain(self, X, y = None, leaf_average = False, l2norm = False, sigmoid = False):
@@ -229,13 +235,15 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
     #     partial_preds = np.nanmean(partial_preds,axis=-1)
     #     return local_feature_importances, partial_preds
     
-    def explain_linear_partial(self, X, y = None, leaf_average = False, l2norm = False):
+    def explain_linear_partial(self, X, y = None, leaf_average = False, l2norm = False, njobs = -1):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
         """
         local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) #partial predictions for each sample  
         local_feature_importances[local_feature_importances == 0] = np.nan
+        
+        start_get_leafs_in_test_samples = time.time()
         
         if y is None:
             evaluate_on = None
@@ -254,9 +262,16 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                     return np.nanmean(local_feature_importances,axis=-1)
         else:
             evaluate_on = self.evaluate_on
+            
+        end_get_leafs_in_test_samples = time.time()
+        
+        self.get_leafs_in_test_samples_time = end_get_leafs_in_test_samples - start_get_leafs_in_test_samples
         
         # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
-        all_tree_LFI_scores = self._get_LFI_subtract_intercept(X, y, leaf_average, l2norm)
+        start_get_lfi = time.time()
+        all_tree_LFI_scores = self._get_LFI_subtract_intercept(X, y, leaf_average, l2norm, njobs)
+        end_get_lfi = time.time()
+        self.get_lfi_time = end_get_lfi - start_get_lfi
 
         for i in range(all_tree_LFI_scores.shape[-1]):
             ith_partial_preds = all_tree_LFI_scores[:,:,i]
@@ -286,6 +301,8 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         all_tree_LFI_scores = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         local_feature_importances[local_feature_importances == 0] = np.nan
         
+        start_get_leafs_in_test_samples = time.time()
+        
         if y is None:
             if self.saved_feature_importances_r_2 is None:
                 raise ValueError("Need to run explain_linear_partial on training first")
@@ -299,11 +316,17 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                     for leaf in leaf_to_samples.keys():
                         local_feature_importances[leaf_to_samples[leaf], :, tree_idx] = self.saved_feature_importances_r_2[tree_idx][leaf]
                 return np.nanmean(local_feature_importances,axis=-1)
+        end_get_leafs_in_test_samples = time.time()
 
         evaluate_on = self.evaluate_on
+        start_get_lfi = time.time()
         all_tree_partial_preds = self._get_LFI(X, y, leaf_average = False, l2norm = l2norm)
+        end_get_lfi = time.time()
         tree_lst = self.rf_plus_model.rf_model.estimators_
         self.saved_feature_importances_r_2 = {}
+                
+        self.get_leafs_in_test_samples_time = end_get_leafs_in_test_samples - start_get_leafs_in_test_samples
+        self.get_lfi_time = end_get_lfi - start_get_lfi
 
         for tree_idx in range(len(tree_lst)):
             leaf_indices = tree_lst[tree_idx].apply(X)
@@ -354,6 +377,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
     ### This LFI is for explain_r2
     def _get_LFI(self, X, y, leaf_average, l2norm):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        start_partial_predictions = time.time()
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
             if self.rf_plus_model._task == "classification":
@@ -362,23 +386,34 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode, l2norm = l2norm)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
+        end_partial_predictions = time.time()
+        self.partial_predictions_time = end_partial_predictions - start_partial_predictions
+        start_leaf_average = time.time()
         if leaf_average:
             LFIs = self.average_per_leaf(X, LFIs)
+        end_leaf_average = time.time()
+        self.leaf_average_time = end_leaf_average - start_leaf_average
         return LFIs
     
     ### This LFI is for explain_linear_partial
-    def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm):
+    def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm, njobs):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        start_partial_predictions = time.time()
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
             if self.rf_plus_model._task == "classification":
-                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode, l2norm=l2norm, sigmoid=False)
+                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode, l2norm=l2norm, sigmoid=False, njobs = njobs)
             else:
-                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode, l2norm=l2norm)
+                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, mode=self.mode, l2norm=l2norm, njobs = njobs)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
+        end_partial_predictions = time.time()
+        self.partial_predictions_time = end_partial_predictions - start_partial_predictions
+        start_leaf_average = time.time()
         if leaf_average:
             LFIs = self.average_per_leaf(X, LFIs)
+        end_leaf_average = time.time()
+        self.leaf_average_time = end_leaf_average - start_leaf_average
         return LFIs
 
        
