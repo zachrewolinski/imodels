@@ -7,7 +7,7 @@ import pandas as pd
 import pprint, copy
 from joblib import Parallel, delayed
 from functools import reduce
-
+import time
 
 #Sklearn imports
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
@@ -123,10 +123,13 @@ class _RandomForestPlus(BaseEstimator):
         self._n_samples_train = X.shape[0]
         self._loo_preds = None
 
-        
+        start_time = time.time()
 
-        X_array, y = _check_Xy(copy.deepcopy(X),y) 
+        X_array, y = _check_Xy(copy.deepcopy(X),y)
         
+        check_data_time = time.time() - start_time        
+        
+        start_fit_rf = time.time()
         
         # fit random forest
         n_samples = X_array.shape[0]
@@ -134,7 +137,15 @@ class _RandomForestPlus(BaseEstimator):
         # check if self.rf_model has already been fit
         if not hasattr(self.rf_model, "estimators_"):
             self.rf_model.fit(X, y, sample_weight=sample_weight)
-                
+            
+        end_fit_rf = time.time()
+        
+        fit_rf_time = end_fit_rf - start_fit_rf
+        
+        self.fit_trees_time = []
+        
+        start_fit_trees = time.time()
+        
         if n_jobs is None:
                 for i,tree_model in enumerate(self.rf_model.estimators_):
                     result = self._fit_ith_tree(tree_model,i,X_array,y,sample_weight,**kwargs)
@@ -149,11 +160,25 @@ class _RandomForestPlus(BaseEstimator):
                 self.transformers_.append(result[1])
                 self._tree_random_states.append(result[2])
                 self._oob_indices[result[3][0]] = result[3][1]
+                self.fit_trees_time.append(result[4])
+        
+        self.fit_trees_time = pd.DataFrame(self.fit_trees_time)
+        
+        end_fit_trees = time.time()
+        fit_forest_time = end_fit_trees - start_fit_trees
+        
+        self.check_data_time = check_data_time
+        self.fit_rf_time = fit_rf_time
+        self.fit_forest_time = fit_forest_time
 
     def _fit_ith_tree(self, tree_model,i, X, y, sample_weight=None, **kwargs):
+                
+        start_ith_tree = time.time()
 
         n_samples = X.shape[0]  
 
+        start_init_transformer = time.time()
+        
         if self.add_transformers is None:
             if self.include_raw:
                 transformer = MDIPlusDefaultTransformer(tree_model,drop_features=self.drop_features)
@@ -166,7 +191,8 @@ class _RandomForestPlus(BaseEstimator):
                 base_transformer_list = [TreeTransformer(tree_model)]
             transformer = CompositeTransformer(base_transformer_list + self.add_transformers,
                                             drop_features=self.drop_features)
-        
+            
+        end_init_transformer = time.time()
         
         prediction_model = copy.deepcopy(self._initial_prediction_model)
         
@@ -175,7 +201,7 @@ class _RandomForestPlus(BaseEstimator):
         inbag_indices = _generate_sample_indices(tree_model.random_state,n_samples,n_samples)
         unique_inbag_indices, counts_elements = np.unique(inbag_indices, return_counts=True)    
 
-
+        start_get_transformed_data = time.time()
         
         # Get transformed data
         X_inbag = copy.deepcopy(X)[inbag_indices]
@@ -183,6 +209,8 @@ class _RandomForestPlus(BaseEstimator):
         tree_blocked_data = transformer.transform(X, center=self.center, normalize=self.normalize)
         tree_X_train = tree_blocked_data.get_all_data()
         tree_y_train = copy.deepcopy(y)
+        
+        end_get_transformed_data = time.time()
 
         #Get sample weights depending on fit on strategy
         tree_sample_weight = np.ones(len(tree_y_train))
@@ -215,14 +243,24 @@ class _RandomForestPlus(BaseEstimator):
         elif self.fit_on == "uniform":
             tree_sample_weight = None
 
+        start_fit_prediction_model = time.time()
 
         if tree_inbag_blocked_data.get_all_data().shape[1] != 0:
             if evaluate_on is None:
                 prediction_model.fit(tree_X_train, tree_y_train, sample_weight=tree_sample_weight)
             else:
                 prediction_model.fit(tree_X_train, tree_y_train, sample_weight=tree_sample_weight,evaluate_on = evaluate_on)
+            
+                
+        end_fit_prediction_model = time.time()
+        end_ith_tree = time.time()
+        
+        fit_trees_time = {"init_transformer": end_init_transformer - start_init_transformer,
+                                  "get_transformed_data": end_get_transformed_data - start_get_transformed_data,
+                                  "fit_prediction_model": end_fit_prediction_model - start_fit_prediction_model,
+                                  "total_ith_tree": end_ith_tree - start_ith_tree}
 
-        return prediction_model, copy.deepcopy(transformer), tree_model.random_state,(i,oob_indices)
+        return prediction_model, copy.deepcopy(transformer), tree_model.random_state,(i,oob_indices), fit_trees_time
         
     def predict(self,X,tree_weights = 'uniform',n_jobs = 1):
         """
