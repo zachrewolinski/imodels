@@ -87,7 +87,7 @@ class MDIPlusGenericRegressorPPM(ABC):
             return ((modified_data**2) @ (coefs**2))**(1/2) + self.estimator.intercept_
         return self.estimator.predict(modified_data)
 
-    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode, l2norm, sign):
+    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode, l2norm, sign, normalize = False):
         modified_data = blocked_data.get_modified_data(k, mode)
         if l2norm:
             if isinstance(self.estimator, AloGLM):
@@ -99,8 +99,18 @@ class MDIPlusGenericRegressorPPM(ABC):
                 coefs = self.estimator.coef_
             if sign:
                 sign_term = np.sign(modified_data @ coefs)
-                return sign_term * ((modified_data**2) @ (coefs**2))**(1/2)
-            return ((modified_data**2) @ (coefs**2))**(1/2)
+                if normalize:
+                    all_data = blocked_data.get_all_data()
+                    size = ((all_data**2) @ (coefs**2)) ** (1/2)
+                    return sign_term * (((modified_data**2) @ (coefs**2))**(1/2))/size
+                else:
+                    return sign_term * ((modified_data**2) @ (coefs**2))**(1/2)
+            if normalize:
+                all_data = blocked_data.get_all_data()
+                size = ((all_data**2) @ (coefs**2)) ** (1/2)
+                return (((modified_data**2) @ (coefs**2))**(1/2))/size
+            else:
+                return ((modified_data**2) @ (coefs**2))**(1/2)
         return self.estimator.predict(modified_data) - self.estimator.intercept_
 
 
