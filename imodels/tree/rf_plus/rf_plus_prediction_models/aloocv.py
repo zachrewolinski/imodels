@@ -53,7 +53,7 @@ class AloGLM():
         self._intercepts_for_each_alpha = {} #intercepts for all reg params
         self.alpha_ = {}
         self.loo_coefficients_ = None
-        self.coefficients_ = None
+        self.coef_ = None
         self._intercept_pred = None
         self.l1_ratio = l1_ratio
         self.influence_matrix_ = None
@@ -91,11 +91,11 @@ class AloGLM():
             self.cv_scores = self.estimator.cv_mean_score_[alpha_index]
             
 
-        self.coefficients_ = self._coeffs_for_each_alpha[self.alpha_]
+        self.coef_ = self._coeffs_for_each_alpha[self.alpha_]
         self.intercept_ = self._intercepts_for_each_alpha[self.alpha_]
 
         self.loo_coefficients_,self.influence_matrix_ = self._get_loo_coefficients(X, y_train) #contains intercept
-        self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
+        self.support_idxs_ = np.where(self.coef_ != 0)[0]
          
     def _get_aloocv_alpha(self, X, y,max_h = 1 - 1e-5):
         #Assume we are solving 1/n l_i + lambda * r
@@ -190,7 +190,7 @@ class AloGLM():
         else:
             sample_weight = self.sample_weight
 
-        orig_coef_ = np.hstack([self.coefficients_, self.intercept_])
+        orig_coef_ = np.hstack([self.coef_, self.intercept_])
         orig_preds = self.inv_link_fn(X1 @ orig_coef_)#self.estimator.predict(X,self.alpha_)
         support_idxs = orig_coef_ != 0
         if not any(support_idxs):
@@ -224,7 +224,7 @@ class AloGLM():
 
     
     def predict(self, X):
-        return self.inv_link_fn(X @ self.coefficients_ + self.intercept_)
+        return self.inv_link_fn(X @ self.coef_ + self.intercept_)
        
     def predict_loo(self, X):
         X1 = np.hstack([X, np.ones((X.shape[0], 1))])
@@ -233,7 +233,7 @@ class AloGLM():
     @property
     def intercept_pred(self):
         if self._intercept_pred is None:
-            self._intercept_pred = np.array([self.inv_link_fn(self.coefficients_[-1])])
+            self._intercept_pred = np.array([self.inv_link_fn(self.coef_[-1])])
         return ("constant_model", self._intercept_pred)
 
 
@@ -324,7 +324,7 @@ class AloGLM():
     # def _optimize_sample_weights(self, X, y):
         
     #     #compute hessians and gradients of loss function with respect to coefficients
-    #     coefficients_with_intercept = np.hstack([self.coefficients_, self.intercept_])  
+    #     coefficients_with_intercept = np.hstack([self.coef_, self.intercept_])  
     #     initial_sample_weight = self.sample_weight  
         
     #     def get_loss_grad_coef(X,y,l1_ratio,alpha_,sample_weight_delta):
