@@ -236,7 +236,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
     #     return local_feature_importances, partial_preds
     
     def explain_linear_partial(self, X, y = None, leaf_average = False,
-                               l2norm = False, sign = False, njobs = -1,
+                               l2norm = False, sign = False, njobs = 1,
                                normalize = False):
         """
         If y is None, return the local feature importance scores for X. 
