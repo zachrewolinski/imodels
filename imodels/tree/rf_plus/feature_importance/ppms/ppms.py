@@ -308,22 +308,24 @@ class MDIPlusGenericClassifierPPM(ABC):
             dict: mapping of feature index to partial predictions.
         """
         
-        modified_data = blocked_data.get_modified_data(k, mode)
+        modified_data = blocked_data.get_modified_data(k, "only_k")
         coefs = self.estimator.coef_
         # reshape coefs if necessary
         if coefs.shape[0] != modified_data.shape[1]:
             coefs = coefs.reshape(-1,1)
+        # print("Prediction:")
+        # print(modified_data @ coefs + self.estimator.intercept_)
         sign_term = 1
         size = 1
         if l2norm:
             if sigmoid:
-                return expit(((modified_data**2) @ (coefs**2))**(1/2))
+                return expit(((modified_data**2) @ (coefs**2)))
             if sign:
                 sign_term = np.sign(modified_data @ coefs)
             if normalize:
                 all_data = blocked_data.get_all_data()
-                size = ((all_data**2) @ (coefs**2))**(1/2)
-            return sign_term * (((modified_data**2) @ (coefs**2))**(1/2))/size
+                size = ((all_data**2) @ (coefs**2))
+            return sign_term * (((modified_data**2) @ (coefs**2)))/size
         if sigmoid:
             return  expit(modified_data @ coefs)
         return modified_data @ coefs

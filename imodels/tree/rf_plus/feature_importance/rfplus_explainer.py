@@ -285,6 +285,13 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
             else:
                 local_feature_importances[:,:,i] = ith_tree_scores
+        # average over axis 1
+        total_lfis = np.sum(local_feature_importances,axis=1)
+        # print("HERE")
+        # print(local_feature_importances.shape)
+        # print(total_lfis.shape)
+        # print(total_lfis)
+        # print(np.nanmean(local_feature_importances,axis=-1))
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
         return local_feature_importances
     
