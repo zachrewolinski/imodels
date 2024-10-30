@@ -51,7 +51,8 @@ class AloGLMClassifier(AloGLM):
         self._intercepts_for_each_alpha = {}
         self.alpha_ = {}
         self.loo_coefficients_ = None
-        self.coefficients_ = None
+        # self.coefficients_ = None
+        self.coef_ = None
         self._intercept_pred = None
         self.l1_ratio = l1_ratio
         self.influence_matrix_ = None
@@ -100,18 +101,22 @@ class AloGLMClassifier(AloGLM):
             alpha_index = np.where(self.estimator.lambda_path_ == self.alpha_)
             self.cv_scores = self.estimator.cv_mean_score_[alpha_index]
         
-        self.coefficients_ = self._coeffs_for_each_alpha[lambda_]
+        # self.coefficients_ = self._coeffs_for_each_alpha[lambda_]
+        self.coef_ = self._coeffs_for_each_alpha[lambda_]
         self.intercept_ = self._intercepts_for_each_alpha[lambda_]
         
         self.loo_coefficients_,self.influence_matrix_ = self._get_loo_coefficients(X, y_train) #contains intercept
-        self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
+        # self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
+        self.support_idxs_ = np.where(self.coef_ != 0)[0]
              
     def predict(self, X, threshold=0.5):
-        preds = self.inv_link_fn(X@self.coefficients_ + self.intercept_)
+        # preds = self.inv_link_fn(X@self.coefficients_ + self.intercept_)
+        preds = self.inv_link_fn(X@self.coef_ + self.intercept_)
         return np.where(preds > threshold, 1, 0)
        
     def predict_proba(self, X):
-        preds =  self.inv_link_fn(X@self.coefficients_ + self.intercept_)
+        # preds =  self.inv_link_fn(X@self.coefficients_ + self.intercept_)
+        preds =  self.inv_link_fn(X@self.coef_ + self.intercept_)
         return np.stack([1 - preds, preds]).T
     
     def predict_proba_loo(self, X,indices = None):
@@ -170,7 +175,8 @@ class AloLogisticElasticNetClassifierCV(AloGLMClassifier):
                 self.cv_scores = best_cv_scores
         
         self.r_doubledot = lambda a: 1.0 - self.l1_ratio
-        self.coefficients_ = self.estimator.coefficients_
+        # self.coefficients_ = self.estimator.coefficients_
+        self.coef_ = self.estimator.coef_
         self.intercept_ = self.estimator.intercept_
         self.loo_coefficients_ = self.estimator.loo_coefficients_
         self.influence_matrix_ = self.estimator.influence_matrix_

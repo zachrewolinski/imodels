@@ -82,7 +82,8 @@ class AloElasticNetRegressorCV(AloGLMRegressor):
                 self.cv_scores = best_cv_scores
         
         self.r_doubledot = lambda a: 1.0 - self.l1_ratio
-        self.coefficients_ = self.estimator.coefficients_
+        # self.coefficients_ = self.estimator.coefficients_
+        self.coef_ = self.estimator.coef_
         self.intercept_ = self.estimator.intercept_
         self.loo_coefficients_ = self.estimator.loo_coefficients_
         self.influence_matrix_ = self.estimator.influence_matrix_
@@ -136,12 +137,14 @@ class AloLOL2Regressor(AloGLMRegressor):
             self._intercepts_for_each_alpha[(l0_penalties[i],l2_penalties[i])] = l0_coeff[0,i]
     
         self._get_aloocv_alpha(X,y,max_h)  
-        self.coefficients_ = self._coeffs_for_each_alpha[(self.l0_penalty,self.alpha_)]
+        # self.coefficients_ = self._coeffs_for_each_alpha[(self.l0_penalty,self.alpha_)]
+        self.coef_ = self._coeffs_for_each_alpha[(self.l0_penalty,self.alpha_)]
         self.intercept_ = self._intercepts_for_each_alpha[(self.l0_penalty,self.alpha_)]
         
        
         self.loo_coefficients_,self.influence_matrix_ = self._get_loo_coefficients(X, y) #contains intercept
-        self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
+        # self.support_idxs_ = np.where(self.coefficients_ != 0)[0]
+        self.support_idxs_ = np.where(self.coef_ != 0)[0]
         print(f"L0L2 Support Indices: {len(self.support_idxs_),len(self.support_idxs_)/X.shape[1]}")
         print(self.predict_loo(X).shape)
         
@@ -151,7 +154,8 @@ class AloLOL2Regressor(AloGLMRegressor):
         # loo_preds = self.inv_link_fn(np.dot(X1, self.loo_coefficients_.T))
         # loo_preds = np.mean(loo_preds, axis=1)
         # return loo_preds
-        return self.inv_link_fn(X@self.coefficients_ + self.intercept_)
+        # return self.inv_link_fn(X@self.coefficients_ + self.intercept_)
+        return self.inv_link_fn(X@self.coef_ + self.intercept_)
         #return np.mean(self.predict_loo(X))
         #np.dot(X, )
     

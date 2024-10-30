@@ -145,8 +145,7 @@ class MDIPlusGenericRegressorPPM(ABC):
         Returns:
             dict: mapping of feature index to partial predictions.
         """
-        
-        modified_data = blocked_data.get_modified_data(k, mode)
+        modified_data = blocked_data.get_modified_data(k, "only_k")
         if (sign or normalize) and (not l2norm):
             print("Warning: sign and normalize only work with l2norm=True.")
         if l2norm:
@@ -164,7 +163,8 @@ class MDIPlusGenericRegressorPPM(ABC):
                 all_data = blocked_data.get_all_data()
                 size = ((all_data**2) @ (coefs**2)) ** (1/2)
             return sign_term * ((((modified_data**2) @ (coefs**2))**(1/2))/size)
-        return self.estimator.predict(modified_data) - self.estimator.intercept_
+        return modified_data @ self.estimator.coef_
+        # return self.estimator.predict(modified_data) - self.estimator.intercept_
 
 class MDIPlusGenericClassifierPPM(ABC):
     """
@@ -361,14 +361,15 @@ class AloMDIPlusPartialPredictionModelRegressor(MDIPlusGenericRegressorPPM,AloGL
         return self.estimator.predict_loo(modified_data)
    
     def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, mode, l2norm, sign):
-        modified_data = blocked_data.get_modified_data(k, mode)
+        modified_data = blocked_data.get_modified_data(k, "only_k")
         if l2norm:
             coefs = self.estimator.loo_coefficients_[:, :-1]
             if sign:
                 signs = np.sign(np.sum(modified_data * coefs, axis=1))
                 return signs*np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1)
             return np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1)
-        return self.estimator.predict_loo(modified_data) - self.estimator.loo_coefficients_[:, -1]
+        return np.sum(modified_data * coefs, axis=1)
+        #return self.estimator.predict_loo(modified_data) - self.estimator.loo_coefficients_[:, -1]
     
 
 class AloMDIPlusPartialPredictionModelClassifier(MDIPlusGenericClassifierPPM,AloGLMClassifier):
@@ -404,7 +405,7 @@ class AloMDIPlusPartialPredictionModelClassifier(MDIPlusGenericClassifierPPM,Alo
         return np.sum((modified_data * coefs), axis = 1) + self.estimator.loo_coefficients_[:, -1]
     
     def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, mode, l2norm, sigmoid, sign):
-        modified_data = blocked_data.get_modified_data(k, mode)
+        modified_data = blocked_data.get_modified_data(k, "only_k")
         coefs = self.estimator.loo_coefficients_[:, :-1]
         if l2norm:
             if sigmoid:

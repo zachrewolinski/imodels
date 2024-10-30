@@ -280,6 +280,8 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
             elif evaluate_on == 'inbag':
                 oob_indices = np.unique(self.oob_indices[i])
+                # print("oob indices")
+                # print(oob_indices)
                 inbag_indices = np.arange(X.shape[0])
                 inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
                 local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
@@ -496,7 +498,8 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
         return LFIs
 
     ### This LFI is for explain_linear_partial
-    def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm, sign):
+    #def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm, sign):
+    def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm, sign, njobs, normalize):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
