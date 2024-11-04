@@ -50,7 +50,8 @@ class MDIPlusGenericRegressorPPM(ABC):
                                                       l2norm)
         return partial_preds
     
-    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm, sign, normalize, njobs = 1):
+    def predict_partial_subtract_intercept(self, blocked_data, l2norm, sign,
+                                           normalize, njobs = 1):
         """
         Gets the partial predictions. To be used when we do not want to consider
         the intercept of the regression model, such as the partial linear LMDI+
@@ -58,7 +59,6 @@ class MDIPlusGenericRegressorPPM(ABC):
 
         Args:
             blocked_data (BlockedPartitionData): Psi(X) data.
-            mode (str): either {"keep_k", "keep_rest"}, see BlockPartitionedData
             l2norm (bool): indicator for if we want to take the l2-normed
                            product of the data and the coefficients.
             sign (bool): indicator for if we want to retain the direction of
@@ -77,8 +77,7 @@ class MDIPlusGenericRegressorPPM(ABC):
         def predict_wrapper(k):
             start_pred_k = time.time()
             predict_k = self.predict_partial_k_subtract_intercept(blocked_data,
-                                                                  k, mode,
-                                                                  l2norm, sign,
+                                                                  k,l2norm,sign,
                                                                   normalize)
             end_time_k = time.time()
             return predict_k, end_time_k - start_pred_k
@@ -125,12 +124,12 @@ class MDIPlusGenericRegressorPPM(ABC):
             # that there is no cancellation going on between positives and
             # negatives in the matrix multiplication - be careful with this,
             # as (AB)^2 != A^2B^2, so we need to do this consistently.
-            return ((modified_data**2) @ (coefs**2)) ** (1/2) + \
+            return ((modified_data**2) @ (coefs**2)) + \
                 self.estimator.intercept_
         return self.estimator.predict(modified_data)
 
-    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode,
-                                             l2norm, sign, normalize):
+    def predict_partial_k_subtract_intercept(self, blocked_data, k, l2norm,
+                                             sign, normalize):
         """
         Gets the partial predictions for an individual feature k, omitting the
         regression intercept in the predictions for the model.
@@ -138,7 +137,6 @@ class MDIPlusGenericRegressorPPM(ABC):
         Args:
             blocked_data (BlockedPartitionData): Psi(X) data.
             k (int): feature index.
-            mode (str): either {"keep_k", "keep_rest"}, see BlockPartitionedData
             l2norm (bool): indicator for if we want to take the l2-normed
                            product of the data and the coefficients.
 
@@ -161,8 +159,8 @@ class MDIPlusGenericRegressorPPM(ABC):
                 sign_term = np.sign(modified_data @ coefs)
             if normalize:
                 all_data = blocked_data.get_all_data()
-                size = ((all_data**2) @ (coefs**2)) ** (1/2)
-            return sign_term * ((((modified_data**2) @ (coefs**2))**(1/2))/size)
+                size = (all_data**2) @ (coefs**2)
+            return sign_term * (((modified_data**2) @ (coefs**2))/size)
         return modified_data @ self.estimator.coef_
         # return self.estimator.predict(modified_data) - self.estimator.intercept_
 
@@ -199,7 +197,7 @@ class MDIPlusGenericClassifierPPM(ABC):
                                                       l2norm, sigmoid)
         return partial_preds
     
-    def predict_partial_subtract_intercept(self, blocked_data, mode, l2norm,
+    def predict_partial_subtract_intercept(self, blocked_data, l2norm,
                                            sign, sigmoid, normalize, njobs = 1):
         """
         Gets the partial predictions. To be used when we do not want to consider
@@ -208,7 +206,6 @@ class MDIPlusGenericClassifierPPM(ABC):
 
         Args:
             blocked_data (BlockedPartitionData): Psi(X) data.
-            mode (str): either {"keep_k", "keep_rest"}, see BlockPartitionedData
             l2norm (bool): indicator for if we want to take the l2-normed
                            product of the data and the coefficients.
             sign (bool): indicator for if we want to retain the direction of
@@ -228,8 +225,7 @@ class MDIPlusGenericClassifierPPM(ABC):
         def predict_wrapper(k):
             start_pred_k = time.time()
             predict_k = self.predict_partial_k_subtract_intercept(blocked_data,
-                                                                  k, mode,
-                                                                  l2norm,
+                                                                  k, l2norm,
                                                                   sigmoid,
                                                                   sign,
                                                                   normalize)
@@ -275,7 +271,7 @@ class MDIPlusGenericClassifierPPM(ABC):
         modified_data = blocked_data.get_modified_data(k, mode)
         coefs = self.estimator.coef_
         if l2norm:
-            ppred = ((modified_data**2) @ (coefs**2))**(1/2) + \
+            ppred = ((modified_data**2) @ (coefs**2)) + \
                 self.estimator.intercept_
             if sigmoid:
                 return expit(ppred)
@@ -285,7 +281,7 @@ class MDIPlusGenericClassifierPPM(ABC):
             return self.estimator.predict_proba(modified_data)[:,1]
         return modified_data @ coefs + self.estimator.intercept_
     
-    def predict_partial_k_subtract_intercept(self, blocked_data, k, mode,
+    def predict_partial_k_subtract_intercept(self, blocked_data, k,
                                              l2norm, sigmoid, sign, normalize):
         """
         Gets the partial predictions for an individual feature k, omitting the
@@ -294,7 +290,6 @@ class MDIPlusGenericClassifierPPM(ABC):
         Args:
             blocked_data (BlockedPartitionData): Psi(X) data.
             k (int): feature index.
-            mode (str): either {"keep_k", "keep_rest"}, see BlockPartitionedData
             l2norm (bool): indicator for if we want to take the l2-normed
                            product of the data and the coefficients.
             sigmoid (bool): indicator for if we want to apply the sigmoid
@@ -331,7 +326,8 @@ class MDIPlusGenericClassifierPPM(ABC):
         return modified_data @ coefs
 
 
-class AloMDIPlusPartialPredictionModelRegressor(MDIPlusGenericRegressorPPM,AloGLMRegressor):
+class AloMDIPlusPartialPredictionModelRegressor(MDIPlusGenericRegressorPPM,
+                                                AloGLMRegressor):
     """
     Assumes that the estimator has a loo_coefficients_ attribute.
     """
@@ -346,28 +342,41 @@ class AloMDIPlusPartialPredictionModelRegressor(MDIPlusGenericRegressorPPM,AloGL
             partial_preds[k] = self.predict_partial_k_loo(blocked_data, k, mode, l2norm)
         return partial_preds
 
-    def predict_partial_loo_subtract_intercept(self, blocked_data, mode, l2norm, sign):
+    def predict_partial_loo_subtract_intercept(self, blocked_data, l2norm, sign,
+                                               normalize):
         n_blocks = blocked_data.n_blocks
         partial_preds = {}
         for k in range(n_blocks):
-            partial_preds[k] = self.predict_partial_k_loo_subtract_intercept(blocked_data, k, mode, l2norm, sign=sign)
+            partial_preds[k] = \
+                self.predict_partial_k_loo_subtract_intercept(blocked_data, k,
+                                                              l2norm, sign,
+                                                              normalize)
         return partial_preds
 
     def predict_partial_k_loo(self, blocked_data, k, mode, l2norm):
         modified_data = blocked_data.get_modified_data(k, mode)
         if l2norm:
             coefs = self.estimator.loo_coefficients_[:, :-1] 
-            return np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1) + self.estimator.loo_coefficients_[:, -1]
+            return np.sum((modified_data**2) * (coefs**2), axis = 1) + self.estimator.loo_coefficients_[:, -1]
         return self.estimator.predict_loo(modified_data)
    
-    def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, mode, l2norm, sign):
+    def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, l2norm,
+                                                 sign, normalize):
         modified_data = blocked_data.get_modified_data(k, "only_k")
         if l2norm:
             coefs = self.estimator.loo_coefficients_[:, :-1]
             if sign:
                 signs = np.sign(np.sum(modified_data * coefs, axis=1))
-                return signs*np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1)
-            return np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1)
+                if normalize:
+                    all_data = blocked_data.get_all_data()
+                    size = np.sum(((all_data**2) * (coefs**2)), axis = 1)
+                    return signs*np.sum((modified_data**2) * (coefs**2), axis = 1)/size
+                return signs*np.sum((modified_data**2) * (coefs**2), axis = 1)
+            if normalize:
+                all_data = blocked_data.get_all_data()
+                size = np.sum(((all_data**2) * (coefs**2)), axis = 1)
+                return np.sum((modified_data**2) * (coefs**2), axis = 1)/size
+            return np.sum((modified_data**2) * (coefs**2), axis = 1)
         return np.sum(modified_data * coefs, axis=1)
         #return self.estimator.predict_loo(modified_data) - self.estimator.loo_coefficients_[:, -1]
     
@@ -386,11 +395,15 @@ class AloMDIPlusPartialPredictionModelClassifier(MDIPlusGenericClassifierPPM,Alo
             partial_preds[k] = self.predict_partial_k_loo(blocked_data, k, mode, l2norm, sigmoid)
         return partial_preds
     
-    def predict_partial_loo_subtract_intercept(self, blocked_data, mode, l2norm, sigmoid, sign):
+    def predict_partial_loo_subtract_intercept(self, blocked_data, l2norm,
+                                               sigmoid, sign, normalize):
         n_blocks = blocked_data.n_blocks
         partial_preds = {}
         for k in range(n_blocks):
-            partial_preds[k] = self.predict_partial_k_loo_subtract_intercept(blocked_data, k, mode, l2norm, sigmoid, sign=sign)
+            partial_preds[k] = \
+                self.predict_partial_k_loo_subtract_intercept(blocked_data, k,
+                                                              l2norm, sigmoid,
+                                                              sign, normalize)
         return partial_preds
 
     def predict_partial_k_loo(self, blocked_data, k, mode, l2norm, sigmoid):
@@ -398,22 +411,34 @@ class AloMDIPlusPartialPredictionModelClassifier(MDIPlusGenericClassifierPPM,Alo
         coefs = self.estimator.loo_coefficients_[:, :-1]
         if l2norm:
             if sigmoid:
-                return expit(np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1) + self.estimator.loo_coefficients_[:, -1])
-            return np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1) + self.estimator.loo_coefficients_[:, -1]
+                return expit(np.sum((modified_data**2) * (coefs**2), axis = 1)+\
+                    self.estimator.loo_coefficients_[:, -1])
+            return np.sum((modified_data**2) * (coefs**2), axis = 1) + \
+                self.estimator.loo_coefficients_[:, -1]
         if sigmoid:
             return self.estimator.predict_proba_loo(modified_data)[:,1]
-        return np.sum((modified_data * coefs), axis = 1) + self.estimator.loo_coefficients_[:, -1]
+        return np.sum((modified_data * coefs), axis = 1) + \
+            self.estimator.loo_coefficients_[:, -1]
     
-    def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, mode, l2norm, sigmoid, sign):
+    def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, l2norm,
+                                                 sigmoid, sign, normalize):
         modified_data = blocked_data.get_modified_data(k, "only_k")
         coefs = self.estimator.loo_coefficients_[:, :-1]
         if l2norm:
             if sigmoid:
-                return expit(np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1))
+                return expit(np.sum((modified_data**2) * (coefs**2), axis = 1))
             if sign:
                 signs = np.sign(np.sum(modified_data * coefs, axis=1))
-                return signs*np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1)
-            return np.sum(((modified_data**2) * (coefs**2))**(1/2), axis = 1)
+                if normalize:
+                    all_data = blocked_data.get_all_data()
+                    size = np.sum(((all_data**2) * (coefs**2)), axis = 1)
+                    return signs*np.sum((modified_data**2) * (coefs**2), axis = 1)/size
+                return signs*np.sum((modified_data**2) * (coefs**2), axis = 1)
+            if normalize:
+                all_data = blocked_data.get_all_data()
+                size = np.sum(((all_data**2) * (coefs**2)), axis = 1)
+                return np.sum((modified_data**2) * (coefs**2), axis = 1)/size
+            return np.sum((modified_data**2) * (coefs**2), axis = 1)
         if sigmoid:
             return expit(np.sum(modified_data * coefs, axis = 1))
         return np.sum(modified_data * coefs, axis = 1)
