@@ -363,8 +363,8 @@ class AloMDIPlusPartialPredictionModelRegressor(MDIPlusGenericRegressorPPM,
     def predict_partial_k_loo_subtract_intercept(self, blocked_data, k, l2norm,
                                                  sign, normalize):
         modified_data = blocked_data.get_modified_data(k, "only_k")
+        coefs = self.estimator.loo_coefficients_[:, :-1]
         if l2norm:
-            coefs = self.estimator.loo_coefficients_[:, :-1]
             if sign:
                 signs = np.sign(np.sum(modified_data * coefs, axis=1))
                 if normalize:
