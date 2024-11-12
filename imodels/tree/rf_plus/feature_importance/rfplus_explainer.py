@@ -237,7 +237,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
     
     def explain_linear_partial(self, X, y = None, leaf_average = False,
                                l2norm = False, sign = False, njobs = 1,
-                               normalize = False):
+                               normalize = False, ranking = False):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
@@ -271,6 +271,12 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         
         # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
         all_tree_LFI_scores = self._get_LFI_subtract_intercept(X, y, leaf_average, l2norm, sign, njobs, normalize)
+        if ranking:
+            all_tree_LFI_scores = np.abs(all_tree_LFI_scores)
+            rank_matrix = np.zeros_like(all_tree_LFI_scores)
+            for i in range(all_tree_LFI_scores.shape[-1]):
+                rank_matrix[:, :, i] = np.argsort(np.argsort(all_tree_LFI_scores[:,:,i]))
+            all_tree_LFI_scores = rank_matrix
 
         for i in range(all_tree_LFI_scores.shape[-1]):
             ith_partial_preds = all_tree_LFI_scores[:,:,i]
@@ -296,7 +302,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         # print(np.nanmean(local_feature_importances,axis=-1))
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
         return local_feature_importances
-    
+
     def explain_r2(self, X, y = None, l2norm = False):
         """
         If y is None, return the local feature importance scores for X. 
@@ -451,8 +457,8 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
     # def explain(self, X, y = None, leaf_average = False, l2norm = False, sigmoid = False):
     #     return super().explain(X, y, leaf_average, l2norm, sigmoid)
     
-    def explain_linear_partial(self, X, y = None, leaf_average = False, l2norm = False, sign=False):
-        return super().explain_linear_partial(X, y, leaf_average, l2norm, sign=sign)
+    def explain_linear_partial(self, X, y = None, leaf_average = False, l2norm = False, sign=False, ranking = False):
+        return super().explain_linear_partial(X, y, leaf_average, l2norm, sign=sign, ranking = ranking)
 
     def explain_r2(self, X, y = None, l2norm = False):
         return super().explain_r2(X, y, l2norm)
@@ -505,14 +511,14 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
             if y is None:
                 if self.rf_plus_model._task == "classification":
-                    ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm, sigmoid=False, sign=sign)
+                    ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm, sign=sign, sigmoid=False, normalize=normalize, njobs=njobs)
                 else:
-                    ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm, sign=sign)
+                    ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm, sign=sign, normalize = normalize, njobs=njobs)
             else:
                 if self.rf_plus_model._task == "classification":
-                    ith_partial_preds = tree_explainer.predict_partial_loo_subtract_intercept(blocked_data_ith_tree, l2norm, False, sign, normalize) # sigmoid is false
+                    ith_partial_preds = tree_explainer.predict_partial_loo_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm, sigmoid=False, sign=sign, normalize=normalize) # sigmoid is false
                 else:
-                    ith_partial_preds = tree_explainer.predict_partial_loo_subtract_intercept(blocked_data_ith_tree, l2norm, sign, normalize)
+                    ith_partial_preds = tree_explainer.predict_partial_loo_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm, sign=sign, normalize=normalize)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
         if leaf_average:
