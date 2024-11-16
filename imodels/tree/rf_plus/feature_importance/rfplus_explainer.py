@@ -303,6 +303,43 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
         return local_feature_importances
 
+
+    def explain_linear_partial_error_metric(self, X, y = None, leaf_average = False, ranking = False):
+        """
+        If y is None, return the local feature importance scores for X. 
+        If y is not None, assume X is FULL training set
+        """
+        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) #partial predictions for each sample  
+        local_feature_importances[local_feature_importances == 0] = np.nan
+        
+        evaluate_on = self.evaluate_on
+            
+        all_tree_LFI_scores = self._get_LFI_error_metric(X, y, leaf_average)
+
+        if ranking:
+            all_tree_LFI_scores = np.abs(all_tree_LFI_scores)
+            rank_matrix = np.zeros_like(all_tree_LFI_scores)
+            for i in range(all_tree_LFI_scores.shape[-1]):
+                rank_matrix[:, :, i] = np.argsort(np.argsort(all_tree_LFI_scores[:,:,i]))
+            all_tree_LFI_scores = rank_matrix
+
+        for i in range(all_tree_LFI_scores.shape[-1]):
+            ith_partial_preds = all_tree_LFI_scores[:,:,i]
+            ith_tree_scores = ith_partial_preds
+            if evaluate_on == 'oob':
+                oob_indices = np.unique(self.oob_indices[i])
+                local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
+            elif evaluate_on == 'inbag':
+                oob_indices = np.unique(self.oob_indices[i])
+                inbag_indices = np.arange(X.shape[0])
+                inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
+                local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
+            else:
+                local_feature_importances[:,:,i] = ith_tree_scores
+        local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
+        return local_feature_importances
+
+
     def explain_r2(self, X, y = None, l2norm = False):
         """
         If y is None, return the local feature importance scores for X. 
@@ -432,6 +469,27 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         self.leaf_average_time = end_leaf_average - start_leaf_average
         return LFIs
 
+    def _get_LFI_error_metric(self, X, y, leaf_average):
+        LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        start_partial_predictions = time.time()
+        for i, tree_explainer in enumerate(self.tree_explainers):
+            blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
+            if self.rf_plus_model._task == "classification":
+                ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode, l2norm = False, sigmoid = True)
+            else:
+                ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode, l2norm = False)
+            ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
+            LFIs[:,:,i] = ith_partial_preds
+        end_partial_predictions = time.time()
+        self.partial_predictions_time = end_partial_predictions - start_partial_predictions
+        start_leaf_average = time.time()
+        LFIs = (LFIs - y[:, np.newaxis, np.newaxis])**2
+        if leaf_average:
+            LFIs = self.average_per_leaf(X, LFIs)
+        end_leaf_average = time.time()
+        self.leaf_average_time = end_leaf_average - start_leaf_average
+        return LFIs
+
        
 class AloRFPlusMDI(RFPlusMDI): #Leave one out 
 
@@ -462,6 +520,9 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
 
     def explain_r2(self, X, y = None, l2norm = False):
         return super().explain_r2(X, y, l2norm)
+
+    def explain_linear_partial_error_metric(self, X, y = None, leaf_average = False, ranking = False):
+        return super().explain_linear_partial_error_metric(X, y, leaf_average, ranking)
 
     #Before
     # def _get_LFI(self, X, y, leaf_average, l2norm, sigmoid):
@@ -525,6 +586,26 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
             LFIs = self.average_per_leaf(X, LFIs)
         return LFIs
     
+    def _get_LFI_error_metric(self, X, y, leaf_average):
+        LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        for i, tree_explainer in enumerate(self.tree_explainers):
+            blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
+            if y is None:
+                if self.rf_plus_model._task == "classification":
+                    ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode, l2norm = False, sigmoid = True)
+                else:
+                    ith_partial_preds = tree_explainer.predict_partial(blocked_data_ith_tree, mode=self.mode, l2norm = False)
+            else:
+                if self.rf_plus_model._task == "classification":
+                    ith_partial_preds = tree_explainer.predict_partial_loo(blocked_data_ith_tree, mode=self.mode, l2norm = False, sigmoid = True)
+                else:
+                    ith_partial_preds = tree_explainer.predict_partial_loo(blocked_data_ith_tree, mode=self.mode, l2norm = False)
+            ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
+            LFIs[:,:,i] = ith_partial_preds
+        LFIs = (LFIs - y[:, np.newaxis, np.newaxis])**2
+        if leaf_average:
+            LFIs = self.average_per_leaf(X, LFIs)
+        return LFIs
             
             
         

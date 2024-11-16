@@ -167,6 +167,10 @@ class BlockPartitionedData:
             data_blocks = \
                 [modified_blocks[i] if i == k else self._data_blocks[i] for
                  i in range(self.n_blocks)]
+        elif mode == "keep_rest_zero":
+            data_blocks = \
+                [np.zeros((self.n_samples, self._data_blocks[i].shape[1])) if i == k else self._data_blocks[i] for
+                    i in range(self.n_blocks)]
         elif mode == "only_k":
             data_blocks = \
                 [self._data_blocks[i] if i == k else np.zeros((self.n_samples, self._data_blocks[i].shape[1])) for

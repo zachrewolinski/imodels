@@ -117,7 +117,7 @@ class MDIPlusGenericRegressorPPM(ABC):
             dict: mapping of feature index to partial predictions.
         """
         
-        modified_data = blocked_data.get_modified_data(k, mode)
+        modified_data = blocked_data.get_modified_data(k, "keep_rest_zero")
         if l2norm:
             coefs = self.estimator.coef_
             # we square both the modified data and the coefficients to ensure
@@ -354,7 +354,7 @@ class AloMDIPlusPartialPredictionModelRegressor(MDIPlusGenericRegressorPPM,
         return partial_preds
 
     def predict_partial_k_loo(self, blocked_data, k, mode, l2norm):
-        modified_data = blocked_data.get_modified_data(k, mode)
+        modified_data = blocked_data.get_modified_data(k, "keep_rest_zero")
         if l2norm:
             coefs = self.estimator.loo_coefficients_[:, :-1] 
             return np.sum((modified_data**2) * (coefs**2), axis = 1) + self.estimator.loo_coefficients_[:, -1]
