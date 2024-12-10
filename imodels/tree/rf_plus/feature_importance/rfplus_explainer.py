@@ -299,9 +299,10 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         # get bootstrap matrices
         if bootstrap:
             bootstrap_samples = []
-            B = 5000
+            B = 2000
             n = local_feature_importances.shape[0]
             t = local_feature_importances.shape[2]
+            result_feature_importances = np.zeros((X.shape[0],X.shape[1]))
             for i in range(n):
                 bootstrap_samples = []
                 for _ in range(B):
@@ -309,14 +310,14 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                     bootstrap_sample = sample[:, np.random.choice(t, size=t, replace=True)]
                     bootstrap_samples.append(bootstrap_sample)
                 bootstrap_samples = np.array(bootstrap_samples)
-                lfi_over_trees = np.nanmean(bootstrap_samples, axis=1)
+                lfi_over_trees = np.nanmean(bootstrap_samples, axis=-1)
                 if ranking:
                     lfi_over_trees = np.abs(lfi_over_trees)
                     lfi_over_trees = np.argsort(lfi_over_trees, axis = 1)
                     lfi_over_trees = np.argsort(lfi_over_trees, axis = 1)
-                # average over the bootstrap samples
-                local_feature_importances[i,:,:] = np.nanmean(lfi_over_trees, axis = 0)
-                
+                result_feature_importances[i,:] = np.nanmean(lfi_over_trees, axis = 0)
+            return result_feature_importances
+        # print(local_feature_importances)        
         # average over axis 1
         # print("HERE")
         # print(local_feature_importances.shape)
@@ -324,6 +325,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         # print(total_lfis)
         # print(np.nanmean(local_feature_importances,axis=-1))
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
+        # print(local_feature_importances)
         return local_feature_importances
 
 
