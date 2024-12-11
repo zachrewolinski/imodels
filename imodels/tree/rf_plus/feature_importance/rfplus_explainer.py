@@ -243,51 +243,78 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
         """
-        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers))) #partial predictions for each sample  
+        
+        # initialize an empty matrix that is NxPxT to store feature importances
+        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        # replace zeros with nans for averaging purposes
         local_feature_importances[local_feature_importances == 0] = np.nan
         
         start_get_leafs_in_test_samples = time.time()
         
+        # if y is None, we are explaining new "test" data
         if y is None:
+            # we set evaluate_on to None so that we don't look at train samples
             evaluate_on = None
+            # if we are using leaf averaging, we just need to see what leaf
+            # each sample falls into and access the average response in that
+            # leaf from the training data
             if leaf_average == True:
+                # need to have run explain_linear_partial on training first
                 if self.saved_feature_importances_linear_partial is None:
                     raise ValueError("Need to run explain_linear_partial on training first")
                 else:
+                    # get trees from rf_plus
                     tree_lst = self.rf_plus_model.rf_model.estimators_
+                    # for each tree, get the leaf each sample falls into
                     for tree_idx in range(len(tree_lst)):
                         leaf_indices = tree_lst[tree_idx].apply(X)
                         leaf_to_samples = {}
+                        # gets the leaf for each sample
                         for leaf in np.unique(leaf_indices):
-                            leaf_to_samples[leaf] = np.where(leaf_indices == leaf)[0]
+                            leaf_to_samples[leaf] = \
+                                np.where(leaf_indices == leaf)[0]
+                        # assigns the saved feature importance to the correct
+                        # spot in the storage matrix
                         for leaf in leaf_to_samples.keys():
                             local_feature_importances[leaf_to_samples[leaf], :, tree_idx] = self.saved_feature_importances_linear_partial[tree_idx][leaf]
-                    return np.nanmean(local_feature_importances,axis=-1)
+                    # average across trees
+                    return np.nanmean(local_feature_importances, axis = -1)
+        # if y is not None, we are explaining the training data
         else:
             evaluate_on = self.evaluate_on
             
         end_get_leafs_in_test_samples = time.time()
-        
         self.get_leafs_in_test_samples_time = end_get_leafs_in_test_samples - start_get_leafs_in_test_samples
         
-        # all_tree_LFI_scores has shape X.shape[0], X.shape[1], num_trees 
-        all_tree_LFI_scores = self._get_LFI_subtract_intercept(X, y, leaf_average, l2norm, sign, njobs, normalize)
+        # has shape NxPxT just like local_feature_importances
+        # we want to keep them separate so that averaging across out-of-bag
+        # and in-bag samples is easier
+        lfi_scores = self._get_LFI_subtract_intercept(X, y, leaf_average,
+                                                      l2norm, sign, njobs, normalize)
 
-        for i in range(all_tree_LFI_scores.shape[-1]):
-            ith_partial_preds = all_tree_LFI_scores[:,:,i]
-            ith_tree_scores = ith_partial_preds
+        # for each tree, we want to get the partial predictions for each sample
+        for i in range(lfi_scores.shape[-1]):
+            # get the scores for the ith tree
+            ith_tree_scores = lfi_scores[:, :, i]
+            oob_indices = np.unique(self.oob_indices[i]) # get oob indices
+            # if we are evaluating on out-of-bag samples, we only want to
+            # save the feature importances corresponding to these samples
+            # for this tree. this will later be remedied by averaging across
+            # trees, so that every observation has a feature importance.
             if evaluate_on == 'oob':
-                oob_indices = np.unique(self.oob_indices[i])
-                local_feature_importances[oob_indices,:,i] = ith_tree_scores[oob_indices,:]
+                # only save the scores for out-of-bag samples
+                local_feature_importances[oob_indices, :, i] = \
+                    ith_tree_scores[oob_indices, :]
+            # perform analogous operations for in-bag samples.
             elif evaluate_on == 'inbag':
-                oob_indices = np.unique(self.oob_indices[i])
-                # print("oob indices")
-                # print(oob_indices)
+                # get in-bag indices by taking set difference with oob samples.
                 inbag_indices = np.arange(X.shape[0])
-                inbag_indices = np.setdiff1d(inbag_indices,oob_indices)
-                local_feature_importances[inbag_indices,:,i] = ith_tree_scores[inbag_indices,:]
+                inbag_indices = np.setdiff1d(inbag_indices, oob_indices)
+                local_feature_importances[inbag_indices, :, i] = \
+                    ith_tree_scores[inbag_indices, :]
+            # if we are evaluating on all samples, they are the same.
             else:
-                local_feature_importances[:,:,i] = ith_tree_scores
+                local_feature_importances[:, :, i] = ith_tree_scores
         
         if ranking and bootstrap != 0:
             local_feature_importances = np.abs(local_feature_importances)
