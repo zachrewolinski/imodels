@@ -238,7 +238,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
     def explain_linear_partial(self, X, y = None, leaf_average = False,
                                l2norm = False, sign = False, njobs = 1,
                                normalize = False, ranking = False,
-                               bootstrap = False):
+                               bootstrap = 0):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
@@ -289,7 +289,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             else:
                 local_feature_importances[:,:,i] = ith_tree_scores
         
-        if ranking and not bootstrap:
+        if ranking and bootstrap != 0:
             local_feature_importances = np.abs(local_feature_importances)
             rank_matrix = np.zeros_like(local_feature_importances)
             for i in range(local_feature_importances.shape[-1]):
@@ -297,15 +297,14 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             local_feature_importances = rank_matrix
                 
         # get bootstrap matrices
-        if bootstrap:
+        if bootstrap != 0:
             bootstrap_samples = []
-            B = 2000
             n = local_feature_importances.shape[0]
             t = local_feature_importances.shape[2]
             result_feature_importances = np.zeros((X.shape[0],X.shape[1]))
             for i in range(n):
                 bootstrap_samples = []
-                for _ in range(B):
+                for _ in range(bootstrap):
                     sample = local_feature_importances[i,:,:]
                     bootstrap_sample = sample[:, np.random.choice(t, size=t, replace=True)]
                     bootstrap_samples.append(bootstrap_sample)
