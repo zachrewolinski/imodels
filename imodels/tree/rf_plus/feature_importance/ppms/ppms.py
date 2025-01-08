@@ -98,6 +98,7 @@ class MDIPlusGenericRegressorPPM(ABC):
         # save runtimes for analysis (can delete later if not needed)
         self._partial_preds_time = np.array(pred_times)
         self._total_partial_preds_time = end_partial_preds - start_partial_preds
+        # print(partial_pred_storage)
         
         return partial_pred_storage
     
@@ -144,23 +145,51 @@ class MDIPlusGenericRegressorPPM(ABC):
             dict: mapping of feature index to partial predictions.
         """
         modified_data = blocked_data.get_modified_data(k, "only_k")
-        if (sign or normalize) and (not l2norm):
-            print("Warning: sign and normalize only work with l2norm=True.")
+        # print("Modified data shape:")
+        # print(modified_data.shape)
+        # print("Modified data:")
+        # print(modified_data)
+        # if (sign or normalize) and (not l2norm):
+            # print("Warning: sign and normalize only work with l2norm=True.")
+        if (sign) and (not l2norm):
+            print("Warning: sign only works with l2norm=True.")
         if l2norm:
             # check if self.estimator has been fit
             if not hasattr(self.estimator, 'coef_'):
                 print("Estimator has not been fit.")
             coefs = self.estimator.coef_
+            # print("Coefs shape:")
+            # print(coefs.shape)
+            # print("Coefs:")
+            # print(coefs)
             # define sign_term and size to be 1 so that we can multiply/divide
             # by them even if we do not define them in the conditionals.
             sign_term = 1
             size = 1
+            new_size = 1
             if sign:
                 sign_term = np.sign(modified_data @ coefs)
+                # print("Sign term:")
+                # print(sign_term)
+                # print("Sign term shape:")
+                # print(sign_term.shape)
             if normalize:
                 all_data = blocked_data.get_all_data()
+                # print("All data shape:")
+                # print(all_data.shape)
+                # print("All data:")
+                # print(all_data)
                 size = (all_data**2) @ (coefs**2)
+                # print("Size shape:")
+                # print(size.shape)
+                new_size = (modified_data**2) @ (coefs**2)
+                # print("New size shape:")
+                # print(new_size.shape)
+                new_size = np.sum(new_size)
+                # print("New size:")
+                # print(new_size)
             return sign_term * (((modified_data**2) @ (coefs**2))/size)
+            # return sign_term * (((modified_data**2) @ (coefs**2))/new_size)
         return modified_data @ self.estimator.coef_
         # return self.estimator.predict(modified_data) - self.estimator.intercept_
 

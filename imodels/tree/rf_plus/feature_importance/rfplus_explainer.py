@@ -244,10 +244,14 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         If y is not None, assume X is FULL training set
         """
         
+        # # initialize an empty matrix that is NxPxT to store feature importances
+        # local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
+        # # replace zeros with nans for averaging purposes
+        # local_feature_importances[local_feature_importances == 0] = np.nan
+        
         # initialize an empty matrix that is NxPxT to store feature importances
-        local_feature_importances = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
-        # replace zeros with nans for averaging purposes
-        local_feature_importances[local_feature_importances == 0] = np.nan
+        local_feature_importances = np.full((X.shape[0], X.shape[1],
+                                             len(self.tree_explainers)), np.nan)
         
         start_get_leafs_in_test_samples = time.time()
         
@@ -296,6 +300,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         for i in range(lfi_scores.shape[-1]):
             # get the scores for the ith tree
             ith_tree_scores = lfi_scores[:, :, i]
+            # TODO: WHY IS THIS OUTSIDE OF THE IF STATEMENT BELOW
             oob_indices = np.unique(self.oob_indices[i]) # get oob indices
             # if we are evaluating on out-of-bag samples, we only want to
             # save the feature importances corresponding to these samples
@@ -315,13 +320,38 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             # if we are evaluating on all samples, they are the same.
             else:
                 local_feature_importances[:, :, i] = ith_tree_scores
+            print("---------------------------------")
+            print("Local Feature Importances for Tree " + str(i))
+            print(local_feature_importances[:,:,i])
         
-        if ranking and bootstrap != 0:
+        if ranking and bootstrap == 0:
             local_feature_importances = np.abs(local_feature_importances)
             rank_matrix = np.zeros_like(local_feature_importances)
             for i in range(local_feature_importances.shape[-1]):
-                rank_matrix[:, :, i] = np.argsort(np.argsort(local_feature_importances[:,:,i]))
+                
+                # ----------------
+                # EDITS:
+                # replace 0s in local_feature_importances with nans
+                lfi_treei = local_feature_importances[:,:,i]
+                lfi_treei[lfi_treei == 0] = np.nan
+                # create a mask for NaN values
+                nan_mask = np.isnan(lfi_treei)
+                # use np.argsort on the non-NaN values (replace NaN with a large value or a value that won't affect the sort)
+                lfi_treei_no_nan = np.copy(lfi_treei)
+                lfi_treei_no_nan[nan_mask] = np.inf
+                sorted_indices = np.argsort(lfi_treei_no_nan)
+                ranks = np.argsort(sorted_indices)
+                # ensure that the indices corresponding to NaN values are also NaN
+                result = np.array(ranks, dtype=float) # use float to allow NaN in array
+                result[nan_mask] = np.nan # replace the positions of NaN in the input with NaN in the output
+                rank_matrix[:,:,i] = result
+                # ----------------
+                # rank_matrix[:, :, i] = np.argsort(np.argsort(local_feature_importances[:,:,i]))
             local_feature_importances = rank_matrix
+            print("---------------------------------")
+            print("Local Feature Importances After Ranking")
+            print(local_feature_importances)
+            print("---------------------------------")
                 
         # get bootstrap matrices
         if bootstrap != 0:
@@ -498,7 +528,10 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         return LFIs
     
     ### This LFI is for explain_linear_partial
+    # TODO: DO NOT NEED TO TAKE Y FOR THIS OR FOR EXPLAIN_LINEAR_PARTIAL
     def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm, sign, njobs, normalize):
+        """
+        """
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         start_partial_predictions = time.time()
         for i, tree_explainer in enumerate(self.tree_explainers):
@@ -510,6 +543,12 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm,
                                                                                       sign=sign, normalize = normalize, njobs=njobs)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
+            # if normalize:
+            #     # get the sums of each row in ith_partial_preds
+            #     rowsums = np.sum(ith_partial_preds, axis=1, keepdims=True)
+            #     # divide each row by its respective sum such that the sum of each row is 1
+            #     ith_partial_preds = ith_partial_preds / np.abs(rowsums)
+            # LFIs[:,:,i] = ith_partial_preds
             LFIs[:,:,i] = ith_partial_preds
         end_partial_predictions = time.time()
         self.partial_predictions_time = end_partial_predictions - start_partial_predictions
