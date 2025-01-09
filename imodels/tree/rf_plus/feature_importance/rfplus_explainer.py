@@ -333,18 +333,32 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 # EDITS:
                 # replace 0s in local_feature_importances with nans
                 lfi_treei = local_feature_importances[:,:,i]
-                lfi_treei[lfi_treei == 0] = np.nan
-                # create a mask for NaN values
-                nan_mask = np.isnan(lfi_treei)
-                # use np.argsort on the non-NaN values (replace NaN with a large value or a value that won't affect the sort)
-                lfi_treei_no_nan = np.copy(lfi_treei)
-                lfi_treei_no_nan[nan_mask] = np.inf
-                sorted_indices = np.argsort(lfi_treei_no_nan)
-                ranks = np.argsort(sorted_indices)
+                # get column indices that are all zeros
+                indices_of_zero_columns = np.where(np.all(lfi_treei==0,
+                                                          axis=0))[0]
+                # set values in columns that are all zeros to -1 so they get ranked last
+                lfi_treei[:, indices_of_zero_columns] = -1
+                # use argsort to get the rank
+                ranks = np.argsort(np.argsort(lfi_treei, kind="stable"), kind = "stable")
                 # ensure that the indices corresponding to NaN values are also NaN
-                result = np.array(ranks, dtype=float) # use float to allow NaN in array
-                result[nan_mask] = np.nan # replace the positions of NaN in the input with NaN in the output
-                rank_matrix[:,:,i] = result
+                ranks = np.array(ranks, dtype=np.float32) # use float to allow NaN in array
+                # replace the ranks of columns in `indices_of_zero_columns` with NaNs
+                ranks[:, indices_of_zero_columns] = np.nan
+                rank_matrix[:,:,i] = ranks
+                # np.savetxt(f"ranks_jsteinhardt{i}.csv", ranks, delimiter=",")
+                
+                # lfi_treei[lfi_treei == 0] = np.nan
+                # # create a mask for values in cols that aren't in tree
+                # nan_mask = np.isnan(lfi_treei)
+                # # use np.argsort on the non-NaN values (replace NaN with a large value or a value that won't affect the sort)
+                # lfi_treei_no_nan = np.copy(lfi_treei)
+                # lfi_treei_no_nan[nan_mask] = np.inf
+                # sorted_indices = np.argsort(lfi_treei_no_nan)
+                # ranks = np.argsort(sorted_indices)
+                # # ensure that the indices corresponding to NaN values are also NaN
+                # result = np.array(ranks, dtype=float) # use float to allow NaN in array
+                # result[nan_mask] = np.nan # replace the positions of NaN in the input with NaN in the output
+                # rank_matrix[:,:,i] = result
                 # ----------------
                 # rank_matrix[:, :, i] = np.argsort(np.argsort(local_feature_importances[:,:,i]))
             local_feature_importances = rank_matrix
@@ -352,6 +366,12 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             print("Local Feature Importances After Ranking")
             print(local_feature_importances)
             print("---------------------------------")
+            # for tree_idx in range(local_feature_importances.shape[2]):
+            #     for col_idx in range(local_feature_importances.shape[1]):
+            #         # get the column removing NaNs
+            #         col = local_feature_importances[:, col_idx, tree_idx]
+                    
+                
                 
         # get bootstrap matrices
         if bootstrap != 0:
