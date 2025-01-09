@@ -235,9 +235,8 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
     #     partial_preds = np.nanmean(partial_preds,axis=-1)
     #     return local_feature_importances, partial_preds
     
-    def explain_linear_partial(self, X, y = None, leaf_average = False,
-                               l2norm = False, sign = False, njobs = 1,
-                               normalize = False, ranking = False,
+    def explain_linear_partial(self, X, y = None, leaf_average = False, njobs = 1,
+                               normalize = False, ranking = False, square = False,
                                bootstrap = 0):
         """
         If y is None, return the local feature importance scores for X. 
@@ -282,7 +281,10 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                         for leaf in leaf_to_samples.keys():
                             local_feature_importances[leaf_to_samples[leaf], :, tree_idx] = self.saved_feature_importances_linear_partial[tree_idx][leaf]
                     # average across trees
-                    return np.nanmean(local_feature_importances, axis = -1)
+                    # print('GOT TO THE POINT WITH FLOAT128')
+                    # truncate local_feature_importances to the third decimal place to avoid memory issues
+                    # local_feature_importances = np.round(local_feature_importances, 3)
+                    return np.nanmean(local_feature_importances, axis = -1)#, dtype=np.float128)
         # if y is not None, we are explaining the training data
         else:
             evaluate_on = self.evaluate_on
@@ -294,7 +296,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         # we want to keep them separate so that averaging across out-of-bag
         # and in-bag samples is easier
         lfi_scores = self._get_LFI_subtract_intercept(X, y, leaf_average,
-                                                      l2norm, sign, njobs, normalize)
+                                                      njobs, normalize, square)
 
         # for each tree, we want to get the partial predictions for each sample
         for i in range(lfi_scores.shape[-1]):
@@ -320,9 +322,9 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             # if we are evaluating on all samples, they are the same.
             else:
                 local_feature_importances[:, :, i] = ith_tree_scores
-            print("---------------------------------")
-            print("Local Feature Importances for Tree " + str(i))
-            print(local_feature_importances[:,:,i])
+            # print("---------------------------------")
+            # print("Local Feature Importances for Tree " + str(i))
+            # print(local_feature_importances[:,:,i])
         
         if ranking and bootstrap == 0:
             local_feature_importances = np.abs(local_feature_importances)
@@ -362,10 +364,10 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 # ----------------
                 # rank_matrix[:, :, i] = np.argsort(np.argsort(local_feature_importances[:,:,i]))
             local_feature_importances = rank_matrix
-            print("---------------------------------")
-            print("Local Feature Importances After Ranking")
-            print(local_feature_importances)
-            print("---------------------------------")
+            # print("---------------------------------")
+            # print("Local Feature Importances After Ranking")
+            # print(local_feature_importances)
+            # print("---------------------------------")
             # for tree_idx in range(local_feature_importances.shape[2]):
             #     for col_idx in range(local_feature_importances.shape[1]):
             #         # get the column removing NaNs
@@ -400,7 +402,8 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         # print(total_lfis.shape)
         # print(total_lfis)
         # print(np.nanmean(local_feature_importances,axis=-1))
-        local_feature_importances = np.nanmean(local_feature_importances,axis=-1)
+        # average across trees
+        local_feature_importances = np.nanmean(local_feature_importances,axis=-1)#,dtype=np.float128)
         # print(local_feature_importances)
         return local_feature_importances
 
@@ -549,27 +552,41 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
     
     ### This LFI is for explain_linear_partial
     # TODO: DO NOT NEED TO TAKE Y FOR THIS OR FOR EXPLAIN_LINEAR_PARTIAL
-    def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm, sign, njobs, normalize):
+    # def _get_LFI_subtract_intercept(self, X, y, leaf_average, l2norm, sign, njobs, normalize):
+    def _get_LFI_subtract_intercept(self, X, y, leaf_average, njobs, normalize,
+                                    square):
         """
         """
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
         start_partial_predictions = time.time()
         for i, tree_explainer in enumerate(self.tree_explainers):
+            # np.savetxt(f"coefs_high{i}.csv", tree_explainer.estimator.coef_, delimiter=",")
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
+            # n_blocks = blocked_data_ith_tree.n_blocks
+            # for k in range(n_blocks):
+            #     np.savetxt(f'modified_data_high_tree{i}_block{k}.csv',
+            #                blocked_data_ith_tree.get_modified_data(k, "only_k"),
+            #                delimiter=',')
+        
             if self.rf_plus_model._task == "classification":
-                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm,
-                                                                                      sign=sign, sigmoid=False, normalize=normalize, njobs=njobs)
+                # ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm,
+                #                                                                       sign=sign, sigmoid=False, normalize=normalize, njobs=njobs)
+                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, square, njobs=njobs)
             else:
-                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm,
-                                                                                      sign=sign, normalize = normalize, njobs=njobs)
+                # ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, l2norm=l2norm,
+                #                                                                       sign=sign, normalize = normalize, njobs=njobs)
+                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, square, njobs=njobs)
+            # transform the dictionary representation to a numpy array
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
-            # if normalize:
-            #     # get the sums of each row in ith_partial_preds
-            #     rowsums = np.sum(ith_partial_preds, axis=1, keepdims=True)
-            #     # divide each row by its respective sum such that the sum of each row is 1
-            #     ith_partial_preds = ith_partial_preds / np.abs(rowsums)
-            # LFIs[:,:,i] = ith_partial_preds
+            if normalize:
+                # square each element in ith_partial_preds
+                squared_ith_partial_preds = np.square(ith_partial_preds)
+                # get the sums of each row in ith_partial_preds
+                rowsums = np.sum(squared_ith_partial_preds, axis=1, keepdims=True)
+                # divide each row by its respective sum such that the sum of each row is 1
+                ith_partial_preds = ith_partial_preds / np.sqrt(rowsums)
             LFIs[:,:,i] = ith_partial_preds
+            
         end_partial_predictions = time.time()
         self.partial_predictions_time = end_partial_predictions - start_partial_predictions
         start_leaf_average = time.time()
