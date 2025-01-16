@@ -408,6 +408,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
         # print(np.nanmean(local_feature_importances,axis=-1))
         # average across trees
         local_feature_importances = np.nanmean(local_feature_importances,axis=-1)#,dtype=np.float128)
+        local_feature_importances[np.isnan(local_feature_importances)] = 0
         # print(local_feature_importances)
         return local_feature_importances
 
