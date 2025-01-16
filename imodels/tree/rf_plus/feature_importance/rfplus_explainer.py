@@ -395,8 +395,8 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 lfi_over_trees = np.nanmean(bootstrap_samples, axis=-1)
                 if ranking:
                     lfi_over_trees = np.abs(lfi_over_trees)
-                    lfi_over_trees = np.argsort(lfi_over_trees, axis = 1)
-                    lfi_over_trees = np.argsort(lfi_over_trees, axis = 1)
+                    lfi_over_trees = np.argsort(lfi_over_trees, axis = 1, kind="stable")
+                    lfi_over_trees = np.argsort(lfi_over_trees, axis = 1, kind="stable")
                 result_feature_importances[i,:] = np.nanmean(lfi_over_trees, axis = 0)
             return result_feature_importances
         # print(local_feature_importances)        
