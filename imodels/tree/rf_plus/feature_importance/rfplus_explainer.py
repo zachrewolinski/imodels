@@ -284,7 +284,11 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                     # print('GOT TO THE POINT WITH FLOAT128')
                     # truncate local_feature_importances to the third decimal place to avoid memory issues
                     # local_feature_importances = np.round(local_feature_importances, 3)
-                    return np.nanmean(local_feature_importances, axis = -1)#, dtype=np.float128)
+                    # return np.nanmean(local_feature_importances, axis = -1)#, dtype=np.float128)
+                    retval = np.nanmean(local_feature_importances, axis = -1)
+                    # if there are NaNs in retval, replace them with 0
+                    retval[np.isnan(retval)] = 0
+                    return retval
         # if y is not None, we are explaining the training data
         else:
             evaluate_on = self.evaluate_on
