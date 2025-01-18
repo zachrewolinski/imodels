@@ -21,6 +21,7 @@ from sklearn.linear_model import LogisticRegression, LogisticRegressionCV, Ridge
 from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
 from sklearn.ensemble._forest import _generate_unsampled_indices, _generate_sample_indices
 from sklearn.neural_network import MLPClassifier, MLPRegressor
+from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
 
 #RF plus prediction imports
 from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_regression import AloElasticNetRegressorCV
@@ -95,10 +96,10 @@ class _RandomForestPlus(BaseEstimator):
         self.estimators_ = []
         self._tree_random_states = []
         self.verbose = verbose
-        self._oob_indices = {}    
-        
+        self._oob_indices = {}
+        self._is_gb = isinstance(rf_model, (GradientBoostingClassifier, GradientBoostingRegressor))        
   
-    def fit(self, X, y, sample_weight=None, n_jobs = -1,**kwargs):
+    def fit(self, X, y, sample_weight=None, n_jobs = -1, **kwargs):
         """
         Fit (or train) Random Forest Plus (RF+) prediction model.
 
@@ -122,6 +123,9 @@ class _RandomForestPlus(BaseEstimator):
         self.feature_names_ = None
         self._n_samples_train = X.shape[0]
         self._loo_preds = None
+        if self._is_gb:
+            self._y_avg = np.mean(y)
+            self._learning_rate = self.rf_model.learning_rate
 
         start_time = time.time()
 
@@ -146,13 +150,30 @@ class _RandomForestPlus(BaseEstimator):
         
         start_fit_trees = time.time()
         
-        if n_jobs is None:
-                for i,tree_model in enumerate(self.rf_model.estimators_):
-                    result = self._fit_ith_tree(tree_model,i,X_array,y,sample_weight,**kwargs)
-                    self.estimators_.append(result[0])
-                    self.transformers_.append(result[1])
-                    self._tree_random_states.append(result[2])
-                    self._oob_indices[result[3][0]] = result[3][1]
+        # parallel computation is not available for gradient boosting
+        if self._is_gb:
+            # make a copy of y
+            curr_pred = np.full(y.shape[0], self._y_avg)
+            resid = copy.deepcopy(y) - curr_pred
+            for i,tree_model in enumerate(self.rf_model.estimators_):
+                if self._is_gb:
+                    tree_model = tree_model[0]
+                result = self._fit_ith_tree(tree_model, i, X_array, resid,
+                                            sample_weight,**kwargs)
+                curr_pred = curr_pred + tree_model.predict(X_array) * self._learning_rate
+                resid = copy.deepcopy(y) - curr_pred
+                self.estimators_.append(result[0])
+                self.transformers_.append(result[1])
+                self._tree_random_states.append(result[2])
+                self._oob_indices[result[3][0]] = result[3][1]
+        elif n_jobs is None:
+            for i,tree_model in enumerate(self.rf_model.estimators_):
+                result = self._fit_ith_tree(tree_model, i, X_array, y,
+                                            sample_weight,**kwargs)
+                self.estimators_.append(result[0])
+                self.transformers_.append(result[1])
+                self._tree_random_states.append(result[2])
+                self._oob_indices[result[3][0]] = result[3][1]
         else:
             results = Parallel(n_jobs=n_jobs,verbose=int(self.verbose))(delayed(self._fit_ith_tree)(tree_model,i,X_array,y,sample_weight,**kwargs) for i,tree_model in enumerate(self.rf_model.estimators_))
             for result in results:
@@ -240,7 +261,8 @@ class _RandomForestPlus(BaseEstimator):
             tree_sample_weight = np.ones(len(tree_y_train))
             tree_sample_weight[unique_inbag_indices] = counts_elements
         
-        elif self.fit_on == "uniform":
+        # boosting doesn't bootstrap
+        elif self.fit_on == "uniform" or self._is_gb:
             tree_sample_weight = None
 
         start_fit_prediction_model = time.time()
@@ -286,6 +308,11 @@ class _RandomForestPlus(BaseEstimator):
             return estimator.predict(blocked_data.get_all_data())
         
         predictions = Parallel(n_jobs=n_jobs)(delayed(parallel_predict_helper)(estimator, transformer) for estimator, transformer in zip(self.estimators_, self.transformers_))
+        if self._is_gb:
+            final_predictions = np.full(predictions[0].shape, self._y_avg)
+            for i in range(len(predictions)):
+                final_predictions += self._learning_rate * predictions[i]
+            return final_predictions
         
         if tree_weights == 'uniform':
             return np.mean(np.vstack(predictions), axis=0)
