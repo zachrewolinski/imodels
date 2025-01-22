@@ -134,6 +134,9 @@ class _RandomForestPlus(BaseEstimator):
             elif self.rf_model.get_params()['loss'] == "log_loss":
                 if self.rf_model.init == "zero":
                     self._y_avg = 0
+                elif self.rf_model.init == None:
+                    # get the most common class
+                    self._y_avg = float(round(np.mean(y)))
                 else:
                     raise ValueError("Only zero initialization is supported for gradient boosting")
                 # self._y_avg = np.log(np.mean(y) / (1 - np.mean(y)))
