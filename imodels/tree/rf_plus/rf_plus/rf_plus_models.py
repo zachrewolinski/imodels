@@ -8,6 +8,8 @@ import pprint, copy
 from joblib import Parallel, delayed
 from functools import reduce
 import time
+import math
+import warnings
 
 #Sklearn imports
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
@@ -22,6 +24,7 @@ from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifi
 from sklearn.ensemble._forest import _generate_unsampled_indices, _generate_sample_indices
 from sklearn.neural_network import MLPClassifier, MLPRegressor
 from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
+from sklearn.tree._tree import TREE_LEAF
 
 #RF plus prediction imports
 from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_regression import AloElasticNetRegressorCV
@@ -124,8 +127,20 @@ class _RandomForestPlus(BaseEstimator):
         self._n_samples_train = X.shape[0]
         self._loo_preds = None
         if self._is_gb:
-            self._y_avg = np.mean(y)
-            self._learning_rate = self.rf_model.learning_rate
+            if self.rf_model.get_params()['loss'] == "squared_error":
+                self._y_avg = np.mean(y)
+                self._learning_rate = self.rf_model.learning_rate
+                self._loss = "squared_error"
+            elif self.rf_model.get_params()['loss'] == "log_loss":
+                if self.rf_model.init == "zero":
+                    self._y_avg = 0
+                else:
+                    raise ValueError("Only zero initialization is supported for gradient boosting")
+                # self._y_avg = np.log(np.mean(y) / (1 - np.mean(y)))
+                self._learning_rate = self.rf_model.learning_rate
+                self._loss = "log_loss"
+            else:
+                raise ValueError("Only squared_error and log_loss are supported for gradient boosting")
 
         start_time = time.time()
 
@@ -150,22 +165,57 @@ class _RandomForestPlus(BaseEstimator):
         
         start_fit_trees = time.time()
         
-        # parallel computation is not available for gradient boosting
+        ### GRADIENT BOOSTING CASE
         if self._is_gb:
-            # make a copy of y
+            
+            # make a copy of y, has to be float32 for gradient function
+            copy_y = copy.deepcopy(y).astype(np.float32)
+            # initialize predictions
             curr_pred = np.full(y.shape[0], self._y_avg)
-            resid = copy.deepcopy(y) - curr_pred
+            
+            # if the loss is squared error, residuals are just the difference
+            # between the true and predicted values
+            if self._loss == "squared_error":
+                resid = copy.deepcopy(y) - curr_pred
+            # if the loss is log-loss, sklearn actually sneakily uses
+            # half-binomial loss. get around this by using the gradient method.
+            elif self._loss == "log_loss":
+                resid = -self.rf_model._loss.gradient(copy_y,
+                                    # the times four took me forever to figure
+                                    # out, still don't fully understand why its
+                                    # needed to make preds equal that of each
+                                    # tree. there is still numerical stability
+                                    # issues, since i think their implementation
+                                    # keeps choosing numbers very very close to
+                                    # four, but not exactly four, which
+                                    # accumulates over time.
+                                    np.zeros(y.shape[0], dtype=np.float32)) * 4
+            # if the loss is something else, we should have already thrown an
+            # error, but we do it again just in case.
+            else:
+                raise ValueError("Only squared_error and log_loss are " + \
+                    "supported for gradient boosting")
+                
+            # now we go through each tree and grow them to the residuals
             for i,tree_model in enumerate(self.rf_model.estimators_):
-                if self._is_gb:
-                    tree_model = tree_model[0]
+                tree_model = tree_model[0] # trees are in an array in sklearn
                 result = self._fit_ith_tree(tree_model, i, X_array, resid,
                                             sample_weight,**kwargs)
-                curr_pred = curr_pred + tree_model.predict(X_array) * self._learning_rate
-                resid = copy.deepcopy(y) - curr_pred
+                curr_pred = curr_pred + tree_model.predict(X_array) * \
+                    self._learning_rate
+                if self._loss == "squared_error":
+                    resid = copy_y - curr_pred
+                else: # log-loss case
+                    resid = -self.rf_model._loss.gradient(copy_y,
+                                            # need to convert to np.float32
+                                            # to prevent error from gradient
+                                            curr_pred.astype(np.float32)) * 4
                 self.estimators_.append(result[0])
                 self.transformers_.append(result[1])
                 self._tree_random_states.append(result[2])
                 self._oob_indices[result[3][0]] = result[3][1]
+                
+        ### RANDOM FOREST CASE
         elif n_jobs is None:
             for i,tree_model in enumerate(self.rf_model.estimators_):
                 result = self._fit_ith_tree(tree_model, i, X_array, y,
@@ -251,7 +301,7 @@ class _RandomForestPlus(BaseEstimator):
         if self.fit_on == "inbag": #only use in-bag samples
             tree_sample_weight = np.zeros(len(tree_y_train))
             tree_sample_weight[unique_inbag_indices] = counts_elements
-            tree_sample_weight[oob_indices] = 1e-12
+            tree_sample_weight[oob_indices] = 0 # 1e-12
         
         elif self.fit_on == "oob": #only use oob samples
             tree_sample_weight = np.ones(len(tree_y_train))*1e-12
@@ -262,7 +312,10 @@ class _RandomForestPlus(BaseEstimator):
             tree_sample_weight[unique_inbag_indices] = counts_elements
         
         # boosting doesn't bootstrap
-        elif self.fit_on == "uniform" or self._is_gb:
+        elif self.fit_on == "uniform":
+            tree_sample_weight = None
+            
+        if self._is_gb:
             tree_sample_weight = None
 
         start_fit_prediction_model = time.time()
@@ -362,7 +415,18 @@ class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
                          center, normalize, fit_on, verbose, warm_start)
     
     def predict(self, X, tree_weights = 'uniform', n_jobs=1):
-        return np.argmax(self.predict_proba(X, tree_weights,n_jobs), axis=1)
+        
+        def parallel_predict_helper(estimator, transformer):
+            blocked_data = transformer.transform(X, center=self.center, normalize=self.normalize)
+            return estimator.predict(blocked_data.get_all_data())
+        if self._is_gb and self._loss == "log_loss":
+            predictions = Parallel(n_jobs=n_jobs)(delayed(parallel_predict_helper)(estimator, transformer) for estimator, transformer in zip(self.estimators_, self.transformers_))
+            final_predictions = np.full(predictions[0].shape, self._y_avg, dtype=np.float64)
+            for i in range(len(predictions)):
+                final_predictions += self._learning_rate * predictions[i]
+            return final_predictions > 0
+        else:
+            return np.argmax(self.predict_proba(X, tree_weights,n_jobs), axis=1)
 
     def predict_proba(self, X, tree_weights = 'uniform', n_jobs=1):
         """
