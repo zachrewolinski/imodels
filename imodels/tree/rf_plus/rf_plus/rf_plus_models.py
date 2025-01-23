@@ -198,7 +198,8 @@ class _RandomForestPlus(BaseEstimator):
             else:
                 raise ValueError("Only squared_error and log_loss are " + \
                     "supported for gradient boosting")
-                
+            past_resid = None
+            resid_diff_arr = np.full(len(self.rf_model.estimators_), np.NaN)
             # now we go through each tree and grow them to the residuals
             for i,tree_model in enumerate(self.rf_model.estimators_):
                 tree_model = tree_model[0] # trees are in an array in sklearn
@@ -207,16 +208,21 @@ class _RandomForestPlus(BaseEstimator):
                 curr_pred = curr_pred + tree_model.predict(X_array) * \
                     self._learning_rate
                 if self._loss == "squared_error":
+                    past_resid = copy.deepcopy(resid)
                     resid = copy_y - curr_pred
                 else: # log-loss case
+                    past_resid = copy.deepcopy(resid)
                     resid = -self.rf_model._loss.gradient(copy_y,
                                             # need to convert to np.float32
                                             # to prevent error from gradient
                                             curr_pred.astype(np.float32)) * 4
+                resid_diff = np.sum(np.abs(np.abs(resid) - np.abs(past_resid)))
+                resid_diff_arr[i] = resid_diff
                 self.estimators_.append(result[0])
                 self.transformers_.append(result[1])
                 self._tree_random_states.append(result[2])
                 self._oob_indices[result[3][0]] = result[3][1]
+            self._resid_diffs = resid_diff_arr
                 
         ### RANDOM FOREST CASE
         elif n_jobs is None:
