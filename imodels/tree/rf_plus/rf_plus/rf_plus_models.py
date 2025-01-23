@@ -100,7 +100,8 @@ class _RandomForestPlus(BaseEstimator):
         self._tree_random_states = []
         self.verbose = verbose
         self._oob_indices = {}
-        self._is_gb = isinstance(rf_model, (GradientBoostingClassifier, GradientBoostingRegressor))        
+        self._is_gb = isinstance(rf_model, (GradientBoostingClassifier, GradientBoostingRegressor))
+        self._resid_diffs = None      
   
     def fit(self, X, y, sample_weight=None, n_jobs = -1, **kwargs):
         """
