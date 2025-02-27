@@ -51,7 +51,7 @@ class TreePlusExpert(nn.Module):
         super(TreePlusExpert, self).__init__()
         
         self.estimator_ = estimator_
-        treeplus_coefficients = torch.from_numpy(estimator_.coefficients_).float()  # Ensure the tensor type is appropriate (float for most cases)
+        treeplus_coefficients = torch.from_numpy(estimator_.loo_coefficients_).float()  # Ensure the tensor type is appropriate (float for most cases)
         treeplus_intercept = torch.from_numpy(np.array([estimator_.intercept_])).float()
         self.treeplus_layer = nn.Parameter(treeplus_coefficients,requires_grad = train_experts)
         self.treeplus_layer_bias = nn.Parameter(treeplus_intercept,requires_grad = train_experts)
@@ -64,7 +64,7 @@ class TreePlusExpert(nn.Module):
    
     def forward(self,x,index = None): #x has shape (batch_size, input_dim)
         
-        #x = self.fc2(self.nl(self.fc1(x)))
+        # x = self.fc2(self.nl(self.fc1(x)))
         return x @ self.treeplus_layer + self.treeplus_layer_bias
         
 
@@ -105,20 +105,19 @@ class GatingNetwork(nn.Module):
         self.num_experts = num_experts 
         self.first_gate = nn.Linear(input_dim, input_dim)  
         self.relu = nn.ReLU()
-        # self.second_gate = nn.Linear(input_dim, input_dim)
+        # self.second_gate = nn.Linear(input_dim, input_dim,)
         # self.relu2 = nn.ReLU()
         self.output_gate = nn.Linear(input_dim, num_experts)
         self.noisy_gating = noisy_gating
-
        
-        nn.init.constant_(self.output_gate.weight,1.0/num_experts)
+        nn.init.constant_(self.output_gate.weight,1.0)
         nn.init.zeros_(self.output_gate.bias)
         
     def forward(self, x):
         gating_scores = self.first_gate(x)
         gating_scores = self.relu(gating_scores)
-        # gating_scores = self.second_gate(gating_scores)
-        # gating_scores = self.relu2(gating_scores)
+        #gating_scores = self.second_gate(gating_scores)
+        #gating_scores = self.relu2(gating_scores)
         gating_scores = self.output_gate(gating_scores)
         if self.noisy_gating:
             pass
