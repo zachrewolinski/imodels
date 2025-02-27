@@ -5,6 +5,7 @@ from scipy.spatial.distance import pdist
 from functools import partial
 import copy
 import pprint
+from collections import defaultdict
 
 # Sklearn imports
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
@@ -12,7 +13,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, log_loss
 from sklearn.datasets import load_diabetes, fetch_california_housing
-from sklearn.linear_model import LogisticRegressionCV
+from sklearn.linear_model import LogisticRegressionCV, RidgeCV
 
 #imports from imodels
 import imodels
@@ -219,15 +220,13 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
             LFIs[:,:,i] = ith_partial_preds
             full_preds[:,i] = tree_explainer.predict_full(blocked_data_ith_tree)
         return LFIs, full_preds
-
        
 class AloRFPlusMDI(RFPlusMDI): #Leave one out 
 
-    def __init__(self, rf_plus_model,mode = 'keep_k', evaluate_on = 'oob'):
+    def __init__(self, rf_plus_model,mode = 'keep_k'):
         self.rf_plus_model = rf_plus_model
         self.mode = mode
         self.oob_indices = self.rf_plus_model._oob_indices
-        self.evaluate_on = evaluate_on #training feature importances 
 
         if self.rf_plus_model._task == "classification":
             self.tree_explainers = [AloMDIPlusPartialPredictionModelClassifier(rf_plus_model.estimators_[i]) 
@@ -238,8 +237,8 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
                                     for i in range(len(rf_plus_model.estimators_))]
             self.metrics = per_sample_neg_mean_absolute_error
         
-    def explain(self, X,y = None):
-        return super().explain(X,y)
+    def explain(self, X,y = None,evaluate_on = 'oob'):
+        return super().explain(X,y,evaluate_on)
 
     def _get_LFI(self,X,y):
         LFIs = np.zeros((X.shape[0],X.shape[1],len(self.tree_explainers)))
@@ -258,9 +257,77 @@ class AloRFPlusMDI(RFPlusMDI): #Leave one out
         return LFIs, full_preds
 
 
+class AloRFPlusLeafMDI(AloRFPlusMDI):
+   
+    def __init__(self, rf_plus_model,mode = 'keep_k'): #evaluate_on only used for training FI 
+        self.rf_plus_model = rf_plus_model
+        self.mode = mode
+        self.oob_indices = self.rf_plus_model._oob_indices
+        #self.evaluate_on = evaluate_on #training feature importances 
+
+        if self.rf_plus_model._task == "classification":
+            self.tree_explainers = [AloMDIPlusPartialPredictionModelClassifier(rf_plus_model.estimators_[i]) 
+                                    for i in range(len(rf_plus_model.estimators_))]
+            self.metrics = per_sample_neg_log_loss
+        else:
+            self.tree_explainers = [AloMDIPlusPartialPredictionModelRegressor(rf_plus_model.estimators_[i]) 
+                                    for i in range(len(rf_plus_model.estimators_))] 
+            self.metrics = per_sample_neg_mean_absolute_error
+                   
+        self.num_trees = len(rf_plus_model.estimators_)
 
 
+    def explain(self,X_train,y_train,X_test = None, evaluate_on='oob'):
+        
+        training_feat_importances, training_partial_preds = super().explain(X_train, y_train, evaluate_on)
+        if X_test is None:        
+            return training_feat_importances, training_partial_preds
+        else:
+            _, test_partial_preds = super().explain(X_test)
+            test_feature_importance = np.zeros((X_test.shape[0], X_test.shape[1], self.num_trees))
+            for tree_idx in range(self.num_trees):
+                _, test_idx_to_train_samples = self._get_training_sample_indices(X_train,X_test,tree_idx)
+                for test_idx in test_idx_to_train_samples:
+                    training_samples_for_test_idx = test_idx_to_train_samples[test_idx] 
+                    #print(f"average feature importances for sample {test_idx} for tree {tree_idx}: {np.mean(training_feat_importances[training_samples_for_test_idx,:],axis = 0)}")
+                    test_feature_importance[test_idx,:,tree_idx] = np.mean(training_feat_importances[training_samples_for_test_idx,:],axis = 0)
             
+            test_feature_importance = np.mean(test_feature_importance,axis = 2)
+            return test_feature_importance, test_partial_preds
+    
+
+   
+   
+    def _get_training_sample_indices(self, X_train, X_test, tree_index):
+        """
+        Get indices of training samples for a set of test samples in a decision tree.
+
+        Parameters:
+        test_samples (np.ndarray): The test samples for which to find the training sample indices.
+        tree_index (int): The index of the tree in the forest.
+
+        Returns:
+        list of np.ndarray: List of arrays, each containing indices of the training samples that reach the same leaf as the corresponding test sample.
+        """
+        tree = self.rf_plus_model.rf_model.estimators_[tree_index].tree_
+        train_leaf_ids = tree.apply(X_train.astype(np.float32)) #get leaf indices of training samples
+        test_leaf_ids = tree.apply(X_test.astype(np.float32))
+
+        leaf_idx_to_train_idx = {}
+        test_idx_to_train_samples = {}
+
+        for train_idx,leaf_idx in enumerate(train_leaf_ids): #Find leaf indices of train samples 
+            if leaf_idx not in leaf_idx_to_train_idx:
+                leaf_idx_to_train_idx[leaf_idx] = []
+            leaf_idx_to_train_idx[leaf_idx].append(train_idx)
+        
+        for test_idx, test_leaf_idx in enumerate(test_leaf_ids): #find train indices that land in same leaf as test index 
+            test_idx_to_train_samples[test_idx] = leaf_idx_to_train_idx[test_leaf_idx]
+        
+
+        return leaf_idx_to_train_idx, test_idx_to_train_samples
+
+    
             
         
 if __name__ == "__main__":
@@ -270,33 +337,47 @@ if __name__ == "__main__":
     #Load  Regression
     X, y, f = imodels.get_clean_dataset("diabetes_regr")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    #X_train, X_test, y_train, y_test  = X_train[:100,:], X_test[:10,:], y_train[:100,], y_test[:10,]
 
     # Fit a RFPlus model
-    rf_model = RandomForestRegressor(n_estimators=10, min_samples_leaf=5, random_state=42)
+    rf_model = RandomForestRegressor(n_estimators=20, min_samples_leaf=5, random_state=42)
     rf_plus_model = RandomForestPlusRegressor(rf_model = rf_model)
-    rf_plus_model.fit(X_train[:100], y_train[:100])
+    rf_plus_model.fit(X_train,y_train)
 
     pprint.pprint("Fitted RFPlus Model")
+
+   
+
 
     #Test MDI
     rf_plus_mdi = AloRFPlusMDI(rf_plus_model)
     local_feature_importances, partial_preds = rf_plus_mdi.explain(X_test[:40])
-    pprint.pprint(rf_plus_mdi.get_rankings(local_feature_importances,f))
 
-    print(f"LFIs have shape: {local_feature_importances.shape}") #Should have shape 40, X.shape[1], num trees
+    print(f"Local MDI+ (Alo) have shape: {local_feature_importances.shape}") #Should have shape 40, X.shape[1], num trees
+    print(f"Local MDI+ (Alo) gives test rankings: {rf_plus_mdi.get_rankings(local_feature_importances)[:10]}")
     
 
-    #Run RFPlusKernelSHAP and RFPlusLime
-    pprint.pprint("Running RFPlusKernelSHAP")
-    rf_plus_kernel_shap = RFPlusKernelSHAP(rf_plus_model)
-    shap_values = rf_plus_kernel_shap.explain(X_train, X_test[:40])
-    pprint.pprint(rf_plus_kernel_shap.get_rankings(shap_values,f))
+    #Test Neighborhood MDI Plus
+    neighborhoodMDIPlus = AloRFPlusLeafMDI(rf_plus_model)
+    neighborhood_test_feat_import, _ = neighborhoodMDIPlus.explain(X_train,y_train,X_test)
 
-    pprint.pprint("Running RFPlusLime")
-    rf_plus_lime = RFPlusLime(rf_plus_model)
-    lime_values = rf_plus_lime.explain(X_train[:100], X_test[:40])
-    pprint.pprint(lime_values.shape)
-    pprint.pprint("RFPlusLime done")
+
+    print(f"Local MDI+ (Alo Neighborhood) have shape: {local_feature_importances.shape}") #Should have shape 40, X.shape[1], num trees
+    print(f"Local MDI+ (Alo Neighborhood) gives scores: {neighborhoodMDIPlus.get_rankings(neighborhood_test_feat_import)[:10]}")
+    
+
+
+    # #Run RFPlusKernelSHAP and RFPlusLime
+    # pprint.pprint("Running RFPlusKernelSHAP")
+    # rf_plus_kernel_shap = RFPlusKernelSHAP(rf_plus_model)
+    # shap_values = rf_plus_kernel_shap.explain(X_train, X_test[:40])
+    # pprint.pprint(rf_plus_kernel_shap.get_rankings(shap_values,f))
+
+    # pprint.pprint("Running RFPlusLime")
+    # rf_plus_lime = RFPlusLime(rf_plus_model)
+    # lime_values = rf_plus_lime.explain(X_train[:100], X_test[:40])
+    # pprint.pprint(lime_values.shape)
+    # pprint.pprint("RFPlusLime done")
 
 
 
