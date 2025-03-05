@@ -289,6 +289,14 @@ class SklearnRFPlusRegMOE(BaseEstimator, RegressorMixin):
             predictions, _, _ = self.model(X)
         return predictions.cpu().numpy()
     
+    def get_weights(self, X):
+        X = torch.tensor(X, dtype=torch.float32)
+        self.model.eval()
+        self.model.training = False
+        with torch.no_grad():
+            _, _, gating_scores = self.model(X)
+        return gating_scores.cpu().numpy()
+    
     def get_params(self, deep=True):
         """Get parameters for this estimator."""
         return {
@@ -362,7 +370,7 @@ if __name__ == "__main__":
 
 
     # Split data into train, validation, and test sets
-    max_train = 250
+    max_train = 500
     X, y, categorical_indicator, attribute_names = dataset.get_data(target=dataset.default_target_attribute,dataset_format="array")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
     X_train, y_train = copy.deepcopy(X_train)[:max_train], copy.deepcopy(y_train)[:max_train]
@@ -388,7 +396,7 @@ if __name__ == "__main__":
     sklearn_rfplus_moe = SklearnRFPlusRegMOE(rfplus_model=rfplus_model) #BinaryF1ScoreBinaryF1Score
     sklearn_rfplus_moe.fit(X_train,y_train)
 
-    sklearn_rfplus_moe_grid = SklearnRFPlusRegMOEGrid(param_grid={'rfplus_model':[rfplus_model],'lr':[1e-2,1e-1]})
+    sklearn_rfplus_moe_grid = SklearnRFPlusRegMOEGrid(param_grid={'rfplus_model':[rfplus_model],'lr':[1e-2]})
     sklearn_rfplus_moe_grid.fit(X_train,y_train)
 
 
@@ -416,8 +424,26 @@ if __name__ == "__main__":
             print("RF+ (MOE Grid): ",m(y_test,sklearn_rfplus_moe_grid.predict(X_test)))
             print("\n")
     
-
-    
+    # Weights for each expert
+    weights = sklearn_rfplus_moe.get_weights(X_test)
+    num_experts = []
+    expert_indices = []
+   
+    for i in range(weights.shape[0]):  # Iterate through each sample
+        row_sum = 0
+        num_needed = 0
+        sorted_indices = np.argsort(weights[i])[::-1]  # Sort indices by weight in descending order
+        row_indices = []
+        for idx in sorted_indices:
+            row_sum += weights[i][idx]
+            num_needed += 1
+            row_indices.append(idx)
+            if row_sum >= 0.95:
+                break
+        num_experts.append(num_needed)
+        expert_indices.append(row_indices)
+    print(num_experts)
+    print(expert_indices)
 
 
 
@@ -450,34 +476,3 @@ if __name__ == "__main__":
 
 
 
-
-
-   # X_train_torch, X_val_torch, y_train_torch, y_val_torch = train_test_split(copy.deepcopy(X_train),copy.deepcopy(y_train), test_size=0.2)
-    
-    
-    # #Get datasets and dataloaders
-    # train_dataset = TabularDataset(torch.tensor(X_train_torch), torch.tensor(y_train_torch))
-    # train_dataloader = DataLoader(train_dataset, batch_size=X_train_torch.shape[0])
-    
-    # val_dataset = TabularDataset(torch.tensor(X_val_torch), torch.tensor(y_val_torch))
-    # val_dataloader = DataLoader(val_dataset, batch_size=X_val_torch.shape[0])
-    
-    # test_dataset = TabularDataset(torch.tensor(X_test), torch.tensor(y_test))
-    # test_dataloader = DataLoader(test_dataset, batch_size=X_test.shape[0])
-
-
-    # rf_model = RandomForestClassifier(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=max_features,random_state=random_state)
-    # rf_model.fit(X_train, y_train)
-    # rfplus_model = RandomForestPlusClassifier(rf_model = rf_model,fit_on = "all")
-    # rfplus_model.fit(X_train,y_train,n_jobs=-1)
-
-
-    # # RFplus_MOEmodel = RandomForestPlusRegressor(rf_model=rf_model,fit_on = "all")  
-    # # RFplus_MOEmodel.fit(X_train,y_train,n_jobs=-1)
-
-   
-    #Define the ModelCheckpoint callback
-    #checkpoint_callback = ModelCheckpoint(dirpath='checkpoints',filename='best_model',monitor='val_loss',mode='min',save_top_k=1,save_last=True,verbose=True)
-    #early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=5, verbose=False, mode="min")
-    
-    
