@@ -191,7 +191,7 @@ class SklearnRFPlusRegMOE(BaseEstimator, RegressorMixin):
     """Scikit-learn wrapper for RandomForestPlusMOE Regressor."""
     
     def __init__(self, max_epochs=50, lr=1e-2, use_loo=False, 
-                 train_experts=True, k=None, noise_epsilon=1e-2, gate_epsilon=1e-10,
+                 train_experts=False, k=None, noise_epsilon=1e-2, gate_epsilon=1e-10,
                  loss_coef=0.01, noisy_gating=False, random_state=None, rfplus_model=None):
         self.max_epochs = max_epochs
         self.lr = lr

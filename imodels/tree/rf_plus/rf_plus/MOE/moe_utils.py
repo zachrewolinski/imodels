@@ -47,7 +47,7 @@ class TabularDataset(Dataset):
 
 class TreePlusExpert(nn.Module):
 
-    def __init__(self,estimator_,input_dim,train_experts = True):
+    def __init__(self,estimator_,input_dim,train_experts = False):
         super(TreePlusExpert, self).__init__()
         
         self.estimator_ = estimator_
