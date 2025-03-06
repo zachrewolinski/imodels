@@ -1,3 +1,6 @@
+
+
+
 #General imports
 from typing import Any
 import numpy as np
@@ -32,9 +35,7 @@ from lightning.pytorch.callbacks.early_stopping import EarlyStopping
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 from sklearn.metrics import roc_auc_score, precision_score, f1_score, accuracy_score, log_loss
-from sklearn.model_selection import train_test_split, cross_val_score, ParameterGrid
-from sklearn.base import BaseEstimator, RegressorMixin
-
+from sklearn.model_selection import train_test_split, cross_val_score
 
 #RF plus imports
 import imodels
@@ -93,6 +94,7 @@ class RandomForestPlusMOE(pl.LightningModule):
             self.test_metrics = test_metrics
         
     def forward(self, x, index = None):
+        print(f"x.shape: {x.shape}")
         gating_scores = self.gate(x)
         if self.training:
             batch_torch_indices = torch.tensor(index) #training indices of elements in batch
@@ -187,176 +189,17 @@ class RandomForestPlusMOE(pl.LightningModule):
     #     self.rfplus_model = checkpoint['rfplus_model']
     #     self.input_dim = checkpoint['input_dim']
 
-class SklearnRFPlusRegMOE(BaseEstimator, RegressorMixin):
-    """Scikit-learn wrapper for RandomForestPlusMOE Regressor."""
     
-    def __init__(self, max_epochs=50, lr=1e-2, use_loo=False, 
-                 train_experts=False, k=None, noise_epsilon=1e-2, gate_epsilon=1e-10,
-                 loss_coef=0.01, noisy_gating=False, random_state=None, rfplus_model=None):
-        self.max_epochs = max_epochs
-        self.lr = lr
-        self.use_loo = use_loo
-        self.train_experts = train_experts
-        self.k = k
-        self.noise_epsilon = noise_epsilon
-        self.gate_epsilon = gate_epsilon
-        self.loss_coef = loss_coef
-        self.noisy_gating = noisy_gating
-        self.random_state = random_state
-        self.rfplus_model = rfplus_model
-        
-    def fit(self, X, y):
-        seed_everything(self.random_state)
-        
-        # Split data into train and validation sets
-        X_train, X_val, y_train, y_val = train_test_split(
-            X, y, 
-            test_size=0.2, 
-            random_state=self.random_state
-        )
-        
-        
-        # Prepare training data
-        X_train = torch.tensor(X_train, dtype=torch.float32)
-        y_train = torch.tensor(y_train, dtype=torch.float32)
-        train_dataset = TabularDataset(X_train, y_train)
-        train_dataloader = DataLoader(train_dataset, batch_size=len(X_train))
-        
-        # Prepare validation data
-        X_val = torch.tensor(X_val, dtype=torch.float32)
-        y_val = torch.tensor(y_val, dtype=torch.float32)
-        val_dataset = TabularDataset(X_val, y_val)
-        val_dataloader = DataLoader(val_dataset, batch_size=len(X_val))
-        
-        # Initialize and train MOE model
-        self.model = RandomForestPlusMOE(
-            rfplus_model=self.rfplus_model,
-            input_dim=X.shape[1],
-            criterion=nn.MSELoss(),
-            use_loo=self.use_loo,
-            train_experts=self.train_experts,
-            lr=self.lr,
-            k=self.k,
-            noise_epsilon=self.noise_epsilon,
-            gate_epsilon=self.gate_epsilon,
-            loss_coef=self.loss_coef,
-            noisy_gating=self.noisy_gating,
-        )
-        
-        checkpoint_callback = ModelCheckpoint(
-            monitor="val_loss",
-            mode="min",
-            save_top_k=1
-        )
-        
-        trainer = Trainer(
-            accelerator="cpu", 
-            max_epochs=self.max_epochs,
-            enable_progress_bar=False,
-            enable_model_summary=False,
-            logger=False,
-            callbacks=[checkpoint_callback]
-        )
-        
-        trainer.fit(self.model, train_dataloader, val_dataloader)
-        # Get validation loss of best model
-        best_val_loss = checkpoint_callback.best_model_score.item()
-        self._val_loss = best_val_loss
-        # Load the best model
-        self.model = RandomForestPlusMOE.load_from_checkpoint(
-            checkpoint_callback.best_model_path,
-            rfplus_model=self.rfplus_model,
-            input_dim=X.shape[1],
-            criterion=nn.MSELoss(),
-            use_loo=self.use_loo,
-            train_experts=self.train_experts,
-            lr=self.lr,
-            k=self.k,
-            noise_epsilon=self.noise_epsilon,
-            gate_epsilon=self.gate_epsilon,
-            loss_coef=self.loss_coef,
-            noisy_gating=self.noisy_gating,
-        )
-        
-        return self
-    
-    def predict(self, X):
-        X = torch.tensor(X, dtype=torch.float32)
-        
-        self.model.eval()
-        self.model.training = False
-        with torch.no_grad():
-            predictions, _, _ = self.model(X)
-        return predictions.cpu().numpy()
-    
-    def get_weights(self, X):
-        X = torch.tensor(X, dtype=torch.float32)
-        self.model.eval()
-        self.model.training = False
-        with torch.no_grad():
-            _, _, gating_scores = self.model(X)
-        return gating_scores.cpu().numpy()
-    
-    def get_params(self, deep=True):
-        """Get parameters for this estimator."""
-        return {
-            "max_epochs": self.max_epochs,
-            "lr": self.lr,
-            "use_loo": self.use_loo,
-            "train_experts": self.train_experts,
-            "k": self.k,
-            "noise_epsilon": self.noise_epsilon,
-            "gate_epsilon": self.gate_epsilon,
-            "loss_coef": self.loss_coef,
-            "noisy_gating": self.noisy_gating,
-            "random_state": self.random_state,
-            "rfplus_model": self.rfplus_model
-        }
-    
-    def set_params(self, **parameters):
-        """Set the parameters of this estimator."""
-        for parameter, value in parameters.items():
-            setattr(self, parameter, value)
-        return self
-
-class SklearnRFPlusRegMOEGrid(SklearnRFPlusRegMOE):
-    def __init__(self, param_grid):
-        self.param_grid = param_grid
-       
-
-    def fit(self, X, y):
-       
-        best_val_loss = float('inf')
-        best_model = None
-        
-        for params in ParameterGrid(self.param_grid):
-            rfplus_moe = SklearnRFPlusRegMOE(**params)
-            rfplus_moe.fit(X, y)
-            
-            # Get validation loss from the trained model
-            val_loss = rfplus_moe._val_loss
-            
-            # Update best model if current validation loss is lower
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_model = copy.deepcopy(rfplus_moe)
-                best_params = params
-        
-        # Store best model
-        self.best_rfplus_moe = best_model
-        self._val_loss = best_val_loss
-        self.best_params = best_params
-        return self
-    
-    def predict(self, X):
-        return self.best_rfplus_moe.predict(X)
 
 if __name__ == "__main__":
-    # Load Data 
+
+
+
+    #Load Data 
     suite_id = 353
     benchmark_suite = openml.study.get_suite(suite_id)
     task_ids = benchmark_suite.tasks
-    task_id = 361236  # regression task
+    task_id =  361235
     random_state = 0
     task = "regression"
     seed_everything(random_state, workers=True)
@@ -374,7 +217,19 @@ if __name__ == "__main__":
     X, y, categorical_indicator, attribute_names = dataset.get_data(target=dataset.default_target_attribute,dataset_format="array")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
     X_train, y_train = copy.deepcopy(X_train)[:max_train], copy.deepcopy(y_train)[:max_train]
- 
+    X_train_torch, X_val_torch, y_train_torch, y_val_torch = train_test_split(copy.deepcopy(X_train),copy.deepcopy(y_train), test_size=0.25)
+    
+    
+    #Get datasets and dataloaders
+    train_dataset = TabularDataset(torch.tensor(X_train_torch), torch.tensor(y_train_torch))
+    train_dataloader = DataLoader(train_dataset, batch_size=X_train_torch.shape[0])
+    
+    val_dataset = TabularDataset(torch.tensor(X_val_torch), torch.tensor(y_val_torch))
+    val_dataloader = DataLoader(val_dataset, batch_size=X_val_torch.shape[0])
+    
+    test_dataset = TabularDataset(torch.tensor(X_test), torch.tensor(y_test))
+    test_dataloader = DataLoader(test_dataset, batch_size=X_test.shape[0])
+
     #fit RF plus model
     if task == "classification":
         n_estimators = 256
@@ -387,18 +242,32 @@ if __name__ == "__main__":
         max_epochs = 50
         max_features = 0.33
 
+    # rf_model = RandomForestClassifier(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=max_features,random_state=random_state)
+    # rf_model.fit(X_train, y_train)
+    # rfplus_model = RandomForestPlusClassifier(rf_model = rf_model,fit_on = "all")
+    # rfplus_model.fit(X_train,y_train,n_jobs=-1)
+
     rf_model = RandomForestRegressor(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=max_features,random_state=random_state)
     rf_model.fit(X_train, y_train)
-    
     rfplus_model = RandomForestPlusRegressor(rf_model = rf_model,fit_on = "all")
     rfplus_model.fit(X_train,y_train,n_jobs=-1)
 
-    sklearn_rfplus_moe = SklearnRFPlusRegMOE(rfplus_model=rfplus_model) #BinaryF1ScoreBinaryF1Score
-    sklearn_rfplus_moe.fit(X_train,y_train)
+    xgb_model = XGBRegressor(n_estimators=n_estimators, min_samples_leaf=min_samples_leaf, max_features=max_features,random_state=random_state)
+    xgb_model.fit(X_train, y_train)
+   
+    # # RFplus_MOEmodel = RandomForestPlusRegressor(rf_model=rf_model,fit_on = "all")  
+    # # RFplus_MOEmodel.fit(X_train,y_train,n_jobs=-1)
 
-    sklearn_rfplus_moe_grid = SklearnRFPlusRegMOEGrid(param_grid={'rfplus_model':[rfplus_model],'lr':[1e-2]})
-    sklearn_rfplus_moe_grid.fit(X_train,y_train)
-
+    #Define the ModelCheckpoint callback
+    checkpoint_callback = ModelCheckpoint(dirpath='checkpoints',filename='best_model',monitor='val_loss',mode='min',save_top_k=1,save_last=True,verbose=True)
+    early_stop_callback = EarlyStopping(monitor="val_loss", min_delta=0.00, patience=5, verbose=False, mode="min")
+    
+    
+    RFplus_MOE = RandomForestPlusMOE(rfplus_model=rfplus_model, input_dim=X.shape[1], criterion= nn.MSELoss(), use_loo = False, train_experts=  True) #BinaryF1ScoreBinaryF1Score
+    logger = TensorBoardLogger(f'RFMOE_task_{task_id}', name='RFMOE')
+    trainer = Trainer(accelerator="cpu",max_epochs=max_epochs,callbacks=[checkpoint_callback],logger=logger)
+    trainer.fit(RFplus_MOE, train_dataloader, val_dataloader)
+    test = trainer.test(dataloaders=test_dataloader)
 
 
     if rfplus_model._task == "classification":
@@ -407,43 +276,26 @@ if __name__ == "__main__":
         for m in class_metrics:
             print(m.__name__)
             print("RF model: ",m(y_test,rf_model.predict(X_test)))
-            print("RF+ Model: ",m(y_test,rfplus_model.predict(X_test)))
+            print("XGB model: ",m(y_test,xgb_model.predict(X_test)))
+            print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict(X_test)))
             print("\n")
         for m in prob_metrics:
             print(m.__name__)
             print("RF model: ",m(y_test,rf_model.predict_proba(X_test)[:,1]))
-            print("RF+ Model: ",m(y_test,rfplus_model.predict_proba(X_test)[:,1]))
+            print("XGB model: ",m(y_test,xgb_model.predict_proba(X_test)[:,1]))
+            print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict_proba(X_test)[:,1]))
             print("\n")
     else:
         metrics = [mean_absolute_error,mean_squared_error, r2_score]
         for m in metrics:
             print(m.__name__)
-            print("RF: ",m(y_test,rf_model.predict(X_test)))
-            print("RF+: ",m(y_test,rfplus_model.predict(X_test)))
-            print("RF+ (MOE): ",m(y_test,sklearn_rfplus_moe.predict(X_test)))
-            print("RF+ (MOE Grid): ",m(y_test,sklearn_rfplus_moe_grid.predict(X_test)))
+            print("RF model: ",m(y_test,rf_model.predict(X_test)))
+            print("XGB model: ",m(y_test,xgb_model.predict(X_test)))
+            print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict(X_test)))
             print("\n")
     
-    # Weights for each expert
-    weights = sklearn_rfplus_moe.get_weights(X_test)
-    num_experts = []
-    expert_indices = []
-   
-    for i in range(weights.shape[0]):  # Iterate through each sample
-        row_sum = 0
-        num_needed = 0
-        sorted_indices = np.argsort(weights[i])[::-1]  # Sort indices by weight in descending order
-        row_indices = []
-        for idx in sorted_indices:
-            row_sum += weights[i][idx]
-            num_needed += 1
-            row_indices.append(idx)
-            if row_sum >= 0.95:
-                break
-        num_experts.append(num_needed)
-        expert_indices.append(row_indices)
-    print(num_experts)
-    print(expert_indices)
+
+    
 
 
 
@@ -471,6 +323,7 @@ if __name__ == "__main__":
     # # ax.legend()
 
     # # #plt.show()
+
 
 
 

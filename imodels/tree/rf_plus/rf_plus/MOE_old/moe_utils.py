@@ -47,11 +47,11 @@ class TabularDataset(Dataset):
 
 class TreePlusExpert(nn.Module):
 
-    def __init__(self,estimator_,input_dim,train_experts = False):
+    def __init__(self,estimator_,input_dim,train_experts = True):
         super(TreePlusExpert, self).__init__()
         
         self.estimator_ = estimator_
-        treeplus_coefficients = torch.from_numpy(estimator_.coefficients_).float()  # Ensure the tensor type is appropriate (float for most cases)
+        treeplus_coefficients = torch.from_numpy(estimator_.loo_coefficients_).float()  # Ensure the tensor type is appropriate (float for most cases)
         treeplus_intercept = torch.from_numpy(np.array([estimator_.intercept_])).float()
         self.treeplus_layer = nn.Parameter(treeplus_coefficients,requires_grad = train_experts)
         self.treeplus_layer_bias = nn.Parameter(treeplus_intercept,requires_grad = train_experts)
@@ -64,7 +64,7 @@ class TreePlusExpert(nn.Module):
    
     def forward(self,x,index = None): #x has shape (batch_size, input_dim)
         
-        #x = self.fc2(self.nl(self.fc1(x)))
+        # x = self.fc2(self.nl(self.fc1(x)))
         return x @ self.treeplus_layer + self.treeplus_layer_bias
         
 

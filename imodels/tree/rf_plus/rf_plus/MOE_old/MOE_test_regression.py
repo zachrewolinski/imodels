@@ -145,39 +145,39 @@ if __name__ == "__main__":
         wandb.agent(sweep_id, function=train, rfplus_model=rfplus_model, input_dim=X.shape[1])
 
         
-        # RFplus_MOE = RandomForestPlusMOE(rfplus_model=rfplus_model, input_dim=X.shape[1], criterion= nn.MSELoss(),lr = 1e-3, use_loo = True, train_experts=  False) #BinaryF1ScoreBinaryF1Score
-        # logger = TensorBoardLogger(f'RFMOE_task_{task_id}', name='RFMOE')
-        # trainer = Trainer(max_epochs=max_epochs,callbacks=[checkpoint_callback])
-        # trainer.fit(RFplus_MOE, train_dataloader, val_dataloader)
-        # best_model_path = trainer.checkpoint_callback.best_model_path
-        # best_val_model = RandomForestPlusMOE.load_from_checkpoint(best_model_path, rfplus_model=rfplus_model, input_dim=X.shape[1])
+        RFplus_MOE = RandomForestPlusMOE(rfplus_model=rfplus_model, input_dim=X.shape[1], criterion= nn.MSELoss(),lr = 1e-3, use_loo = True, train_experts=  False) #BinaryF1ScoreBinaryF1Score
+        logger = TensorBoardLogger(f'RFMOE_task_{task_id}', name='RFMOE')
+        trainer = Trainer(max_epochs=max_epochs,callbacks=[checkpoint_callback])
+        trainer.fit(RFplus_MOE, train_dataloader, val_dataloader)
+        best_model_path = trainer.checkpoint_callback.best_model_path
+        best_val_model = RandomForestPlusMOE.load_from_checkpoint(best_model_path, rfplus_model=rfplus_model, input_dim=X.shape[1])
 
 
 
 
-        # rfplus_test_preds = rfplus_model.predict(X_test)
-        # best_val_model.eval()
-        # print(torch.tensor(X_test))
-        # rfplus_moe_test_preds,_, gating_scores = best_val_model(torch.tensor(X_test).float())
-        # rfplus_moe_test_preds = rfplus_moe_test_preds.detach().numpy()
-        # rftest_preds = rf_model.predict(X_test)
+        rfplus_test_preds = rfplus_model.predict(X_test)
+        best_val_model.eval()
+        print(torch.tensor(X_test))
+        rfplus_moe_test_preds,_, gating_scores = best_val_model(torch.tensor(X_test).float())
+        rfplus_moe_test_preds = rfplus_moe_test_preds.detach().numpy()
+        rftest_preds = rf_model.predict(X_test)
 
 
-        # metrics = [mean_absolute_error,mean_squared_error, r2_score]
-        # inference_time_metrics = ["avg_experts","median_experts","std_experts"]
-        # scores = {"RF" : {m.__name__: m(y_test,rftest_preds) for m in metrics}, "RFPlus" : {m.__name__ :m(y_test,rfplus_test_preds) for m in metrics}, "RFPlusMOE" : {m.__name__ :m(y_test,rfplus_moe_test_preds) for m in metrics}}
-        # for model in scores:
-        #     for metric in inference_time_metrics:
-        #         scores[model][metric] = n_estimators
-        #     scores[model]["std_experts"] = 0.0
+        metrics = [mean_absolute_error,mean_squared_error, r2_score]
+        inference_time_metrics = ["avg_experts","median_experts","std_experts"]
+        scores = {"RF" : {m.__name__: m(y_test,rftest_preds) for m in metrics}, "RFPlus" : {m.__name__ :m(y_test,rfplus_test_preds) for m in metrics}, "RFPlusMOE" : {m.__name__ :m(y_test,rfplus_moe_test_preds) for m in metrics}}
+        for model in scores:
+            for metric in inference_time_metrics:
+                scores[model][metric] = n_estimators
+            scores[model]["std_experts"] = 0.0
         
-        # #scores = pd.DataFrame.from_dict(scores, orient='index')
+        #scores = pd.DataFrame.from_dict(scores, orient='index')
         
 
-        # num_experts_used  = get_columns_to_exceed_threshold(gating_scores, threshold=0.99)
-        # scores[model]["avg_experts"],scores[model]["median_experts"], scores[model]["std_experts"] = torch.mean(num_experts_used).item(), torch.median(num_experts_used).item(), torch.std(num_experts_used).item()
-        # scores = pd.DataFrame.from_dict(scores, orient='index')
-        # print(scores.to_markdown())
+        num_experts_used  = get_columns_to_exceed_threshold(gating_scores, threshold=0.99)
+        scores[model]["avg_experts"],scores[model]["median_experts"], scores[model]["std_experts"] = torch.mean(num_experts_used).item(), torch.median(num_experts_used).item(), torch.std(num_experts_used).item()
+        scores = pd.DataFrame.from_dict(scores, orient='index')
+        print(scores.to_markdown())
 
         if fold >= max_reps:
             break
@@ -188,7 +188,7 @@ if __name__ == "__main__":
 
 
 
-    # # test = trainer.test(dataloaders=test_dataloader)
+    test = trainer.test(dataloaders=test_dataloader)
 
     
 
@@ -196,10 +196,10 @@ if __name__ == "__main__":
 
 
     
-    # # for m in metrics:
-    # #         print(m.__name__)
-    # #         print("RF model: ",m(y_test,rf_model.predict(X_test)))
-    # #         print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict(X_test)))
-    # #         #print("RF+ Model with MOE: ",m(y_test,RFplus_MOE_preds))
-    # #         print("\n")
+    for m in metrics:
+            print(m.__name__)
+            print("RF model: ",m(y_test,rf_model.predict(X_test)))
+            print("RF+ Model without MOE: ",m(y_test,rfplus_model.predict(X_test)))
+            print("RF+ Model with MOE: ",m(y_test, RFplus_MOE_preds))
+            print("\n")
     
