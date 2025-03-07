@@ -237,7 +237,7 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
     
     def explain_linear_partial(self, X, y = None, leaf_average = False, njobs = 1,
                                normalize = False, ranking = False, square = False,
-                               bootstrap = 0):
+                               bootstrap = 0, moe_weight = None):
         """
         If y is None, return the local feature importance scores for X. 
         If y is not None, assume X is FULL training set
@@ -380,40 +380,33 @@ class RFPlusMDI(_RandomForestPlusExplainer): #No leave one out
                 
                 
         # get bootstrap matrices
-        if bootstrap != 0:
-            bootstrap_samples = []
-            n = local_feature_importances.shape[0]
-            t = local_feature_importances.shape[2]
-            result_feature_importances = np.zeros((X.shape[0],X.shape[1]))
-            for i in range(n):
-                bootstrap_samples = []
-                for _ in range(bootstrap):
-                    sample = local_feature_importances[i,:,:]
-                    bootstrap_sample = sample[:, np.random.choice(t, size=t, replace=True)]
-                    bootstrap_samples.append(bootstrap_sample)
-                bootstrap_samples = np.array(bootstrap_samples)
-                lfi_over_trees = np.nanmean(bootstrap_samples, axis=-1)
-                if ranking:
-                    lfi_over_trees = np.abs(lfi_over_trees)
-                    lfi_over_trees = np.argsort(lfi_over_trees, axis = 1, kind="stable")
-                    lfi_over_trees = np.argsort(lfi_over_trees, axis = 1, kind="stable")
-                result_feature_importances[i,:] = np.nanmean(lfi_over_trees, axis = 0)
-            return result_feature_importances
-        # print(local_feature_importances)        
-        # average over axis 1
-        # print("HERE")
-        # print(local_feature_importances.shape)
-        # print(total_lfis.shape)
-        # print(total_lfis)
-        # print(np.nanmean(local_feature_importances,axis=-1))
-        # average across trees
-        # if self.rf_plus_model._resid_diffs is not None:
-        #     local_feature_importances = local_feature_importances * self.rf_plus_model._resid_diffs
-        #     local_feature_importances = np.nansum(local_feature_importances,axis=-1)
-        #     local_feature_importances = local_feature_importances / np.sum(self.rf_plus_model._resid_diffs)
-        # else:
-        local_feature_importances = np.nanmean(local_feature_importances,axis=-1)#,dtype=np.float128)
-        local_feature_importances[np.isnan(local_feature_importances)] = 0
+        # if bootstrap != 0:
+        #     bootstrap_samples = []
+        #     n = local_feature_importances.shape[0]
+        #     t = local_feature_importances.shape[2]
+        #     result_feature_importances = np.zeros((X.shape[0],X.shape[1]))
+        #     for i in range(n):
+        #         bootstrap_samples = []
+        #         for _ in range(bootstrap):
+        #             sample = local_feature_importances[i,:,:]
+        #             bootstrap_sample = sample[:, np.random.choice(t, size=t, replace=True)]
+        #             bootstrap_samples.append(bootstrap_sample)
+        #         bootstrap_samples = np.array(bootstrap_samples)
+        #         lfi_over_trees = np.nanmean(bootstrap_samples, axis=-1)
+        #         if ranking:
+        #             lfi_over_trees = np.abs(lfi_over_trees)
+        #             lfi_over_trees = np.argsort(lfi_over_trees, axis = 1, kind="stable")
+        #             lfi_over_trees = np.argsort(lfi_over_trees, axis = 1, kind="stable")
+        #         result_feature_importances[i,:] = np.nanmean(lfi_over_trees, axis = 0)
+        #     return result_feature_importances
+
+        if moe_weight is not None:
+            expanded_moe_weight = np.expand_dims(moe_weight, axis=1)
+            local_feature_importances = np.nansum(local_feature_importances * expanded_moe_weight, axis=-1)
+            local_feature_importances[np.isnan(local_feature_importances)] = 0
+        else:
+            local_feature_importances = np.nanmean(local_feature_importances, axis=-1)
+            local_feature_importances[np.isnan(local_feature_importances)] = 0
         # print(local_feature_importances)
         return local_feature_importances
 
