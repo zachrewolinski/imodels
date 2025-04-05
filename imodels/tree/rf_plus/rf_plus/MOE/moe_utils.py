@@ -77,7 +77,7 @@ class AloTreePlusExpert(nn.Module):
         
         self.estimator_ = estimator_
         self.classification = classification
-        treeplus_coefficients = torch.from_numpy(estimator_.coefficients_).float()  # Ensure the tensor type is appropriate (float for most cases)
+        treeplus_coefficients = torch.from_numpy(estimator_.coef_).float()  # Ensure the tensor type is appropriate (float for most cases)
         treeplus_intercept = torch.from_numpy(np.array([estimator_.intercept_])).float()
         self.treeplus_layer = nn.Parameter(treeplus_coefficients,requires_grad = train_experts)
         self.treeplus_layer_bias = nn.Parameter(treeplus_intercept,requires_grad = train_experts)        

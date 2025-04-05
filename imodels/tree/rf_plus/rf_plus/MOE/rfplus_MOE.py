@@ -190,9 +190,10 @@ class RandomForestPlusMOE(pl.LightningModule):
 class SklearnRFPlusRegMOE(BaseEstimator, RegressorMixin):
     """Scikit-learn wrapper for RandomForestPlusMOE Regressor."""
     
-    def __init__(self, max_epochs=50, lr=1e-2, use_loo=False, 
+    def __init__(self, checkpoint_path, rfplus_model, max_epochs=50, lr=1e-2, use_loo=False, 
                  train_experts=False, k=None, noise_epsilon=1e-2, gate_epsilon=1e-10,
-                 loss_coef=0.01, noisy_gating=False, random_state=None, rfplus_model=None):
+                 loss_coef=0.01, noisy_gating=False, random_state=0):
+        self.checkpoint_path = checkpoint_path
         self.max_epochs = max_epochs
         self.lr = lr
         self.use_loo = use_loo
@@ -244,9 +245,11 @@ class SklearnRFPlusRegMOE(BaseEstimator, RegressorMixin):
         )
         
         checkpoint_callback = ModelCheckpoint(
+            dirpath=self.checkpoint_path,
             monitor="val_loss",
             mode="min",
-            save_top_k=1
+            save_top_k=1,
+            save_weights_only=True
         )
         
         trainer = Trainer(
@@ -393,10 +396,10 @@ if __name__ == "__main__":
     rfplus_model = RandomForestPlusRegressor(rf_model = rf_model,fit_on = "all")
     rfplus_model.fit(X_train,y_train,n_jobs=-1)
 
-    sklearn_rfplus_moe = SklearnRFPlusRegMOE(rfplus_model=rfplus_model) #BinaryF1ScoreBinaryF1Score
+    sklearn_rfplus_moe = SklearnRFPlusRegMOE(rfplus_model=rfplus_model)
     sklearn_rfplus_moe.fit(X_train,y_train)
 
-    sklearn_rfplus_moe_grid = SklearnRFPlusRegMOEGrid(param_grid={'rfplus_model':[rfplus_model],'lr':[1e-2]})
+    sklearn_rfplus_moe_grid = SklearnRFPlusRegMOEGrid(param_grid={'rfplus_model':[rfplus_model],'lr':[1e-2, 1e-3, 1e-4], 'checkpoint_path': ["./tempppp"]})
     sklearn_rfplus_moe_grid.fit(X_train,y_train)
 
 
@@ -442,8 +445,8 @@ if __name__ == "__main__":
                 break
         num_experts.append(num_needed)
         expert_indices.append(row_indices)
-    print(num_experts)
-    print(expert_indices)
+    # print(num_experts)
+    # print(expert_indices)
 
 
 
