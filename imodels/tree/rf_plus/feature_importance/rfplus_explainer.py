@@ -138,9 +138,9 @@ class LMDIPlus():
         for i, tree_explainer in enumerate(self.tree_explainers):
             blocked_data_ith_tree = self.rf_plus_model.transformers_[i].transform(X)
             if self.rf_plus_model._task == "classification":
-                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, square=False, njobs=njobs)
+                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, njobs=njobs)
             else:
-                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, square=False, njobs=njobs)
+                ith_partial_preds = tree_explainer.predict_partial_subtract_intercept(blocked_data_ith_tree, njobs=njobs)
             ith_partial_preds = np.array([ith_partial_preds[j] for j in range(X.shape[1])]).T
             LFIs[:,:,i] = ith_partial_preds
         return LFIs
