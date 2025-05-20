@@ -1,27 +1,27 @@
-# Generic imports
+# generic imports
 import numpy as np
-import pandas as pd
-from scipy.spatial.distance import pdist
-from functools import partial
-import copy
-import pprint
+# import pandas as pd
+# from scipy.spatial.distance import pdist
+# from functools import partial
+# import copy
+# import pprint
 
-# Sklearn imports
-from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, log_loss
-from sklearn.datasets import load_diabetes, fetch_california_housing
-from sklearn.linear_model import LogisticRegressionCV
+# sklearn imports
+# from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
+# from sklearn.model_selection import train_test_split
+# from sklearn.metrics import r2_score, mean_squared_error, mean_absolute_error
+# from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, log_loss
+# from sklearn.datasets import load_diabetes, fetch_california_housing
+# from sklearn.linear_model import LogisticRegressionCV
 
-#imports from imodels
-import imodels
+# imports from imodels
+# import imodels
 from imodels.tree.rf_plus.feature_importance.ppms.ppms import MDIPlusGenericRegressorPPM, MDIPlusGenericClassifierPPM
-from imodels.tree.rf_plus.feature_importance.ppms.ppms import AloMDIPlusPartialPredictionModelRegressor, AloMDIPlusPartialPredictionModelClassifier
-from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_regression import AloGLMRegressor, AloElasticNetRegressorCV
-from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_classification import AloGLMClassifier, AloLogisticElasticNetClassifierCV
-from imodels.tree.rf_plus.data_transformations.block_transformers import BlockTransformerBase, _blocked_train_test_split, BlockPartitionedData
-from imodels.tree.rf_plus.rf_plus.rf_plus_models import RandomForestPlusRegressor, RandomForestPlusClassifier
+# from imodels.tree.rf_plus.feature_importance.ppms.ppms import AloMDIPlusPartialPredictionModelRegressor, AloMDIPlusPartialPredictionModelClassifier
+# from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_regression import AloGLMRegressor, AloElasticNetRegressorCV
+# from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_classification import AloGLMClassifier, AloLogisticElasticNetClassifierCV
+# from imodels.tree.rf_plus.data_transformations.block_transformers import BlockTransformerBase, _blocked_train_test_split, BlockPartitionedData
+# from imodels.tree.rf_plus.rf_plus.rf_plus_models import RandomForestPlusRegressor, RandomForestPlusClassifier
 
 
 

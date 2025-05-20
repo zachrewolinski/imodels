@@ -1,12 +1,10 @@
+# imports
 from abc import ABC, abstractmethod
-
 import numpy as np
-import pprint
+# import pprint
 from collections import defaultdict
-
 from sklearn.ensemble import BaseEnsemble
 from sklearn.ensemble._forest import _generate_unsampled_indices, _generate_sample_indices
-
 from imodels.tree.rf_plus.data_transformations.local_stumps import make_stumps, tree_feature_transform
 
 
