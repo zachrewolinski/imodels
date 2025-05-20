@@ -1,25 +1,8 @@
-#import copy
+# imports
 import numpy as np
 import pandas as pd
-# import shap
-# import lime
-# import pprint
-# from joblib import Parallel, delayed
-# from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
-# from sklearn.utils import check_array
-# from sklearn.utils.validation import check_is_fitted
-# from sklearn.metrics import r2_score, roc_auc_score, log_loss, mean_absolute_error, mean_squared_error
 from sklearn.metrics import log_loss
-# from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-# from sklearn.preprocessing import OneHotEncoder
-# from sklearn.model_selection import train_test_split
-# from tqdm import tqdm
-# from functools import reduce
-# from joblib import Parallel, delayed
-# from imodels.tree.rf_plus.data_transformations.block_transformers import BlockPartitionedData, _blocked_train_test_split
 from imodels.tree.rf_plus.data_transformations.block_transformers import _blocked_train_test_split
-# from sklearn.ensemble._forest import _generate_unsampled_indices, _generate_sample_indices
-
 
 def _fast_r2_score(y_true, y_pred, multiclass=False):
     """

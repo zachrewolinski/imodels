@@ -1,41 +1,22 @@
 # generic imports
-  
 import numpy as np
-# import pandas as pd
 import copy
 from joblib import Parallel, delayed
-# from functools import reduce
-# import time
-# import math
-# import warnings
 
 # sklearn imports
 from sklearn.base import BaseEstimator, RegressorMixin, ClassifierMixin
 from sklearn.utils import check_array
 from sklearn.utils.validation import check_is_fitted
-# from sklearn.metrics import r2_score, roc_auc_score, log_loss, f1_score, average_precision_score, accuracy_score, mean_absolute_error, mean_squared_error
 from sklearn.ensemble import RandomForestRegressor, RandomForestClassifier
-# from sklearn.preprocessing import OneHotEncoder
 from sklearn.model_selection import train_test_split
-# from sklearn.linear_model import LogisticRegression, LogisticRegressionCV, RidgeCV
 from sklearn.ensemble import GradientBoostingRegressor, GradientBoostingClassifier
 from sklearn.ensemble._forest import _generate_unsampled_indices, _generate_sample_indices
-# from sklearn.neural_network import MLPClassifier, MLPRegressor
-# from sklearn.tree import DecisionTreeRegressor, DecisionTreeClassifier
-# from sklearn.tree._tree import TREE_LEAF
 
 # rf+ prediction imports
 from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_regression import AloElasticNetRegressorCV
 from imodels.tree.rf_plus.rf_plus_prediction_models.aloocv_classification import AloLogisticElasticNetClassifierCV
-# from imodels.tree.rf_plus.rf_plus.rf_plus_utils import _fast_r2_score, _neg_log_loss, _check_X, _check_Xy, _get_sample_split_data
 from imodels.tree.rf_plus.rf_plus.rf_plus_utils import _check_X, _check_Xy
 from imodels.tree.rf_plus.data_transformations.block_transformers import MDIPlusDefaultTransformer, TreeTransformer, CompositeTransformer, IdentityTransformer
-# import imodels 
-
-# testing imports
-# from pmlb import fetch_data
-# import openml
-
 
 class _RandomForestPlus(BaseEstimator):
     """
@@ -143,29 +124,12 @@ class _RandomForestPlus(BaseEstimator):
             else:
                 raise ValueError("Only squared_error and log_loss are supported for gradient boosting")
 
-        # start_time = time.time()
-
         X_array, y = _check_Xy(copy.deepcopy(X),y)
-        
-        # check_data_time = time.time() - start_time        
-        
-        # start_fit_rf = time.time()
-        
-        # fit random forest
-        # n_samples = X_array.shape[0]
         
         # check if self.rf_model has already been fit
         if not hasattr(self.rf_model, "estimators_"):
             self.rf_model.fit(X, y, sample_weight=sample_weight)
-            
-        # end_fit_rf = time.time()
-        
-        # fit_rf_time = end_fit_rf - start_fit_rf
-        
-        self.fit_trees_time = []
-        
-        # start_fit_trees = time.time()
-        
+                                            
         ### GRADIENT BOOSTING CASE
         if self._is_gb:
             
@@ -238,16 +202,6 @@ class _RandomForestPlus(BaseEstimator):
                 self.transformers_.append(result[1])
                 self._tree_random_states.append(result[2])
                 self._oob_indices[result[3][0]] = result[3][1]
-                # self.fit_trees_time.append(result[4])
-        
-        # self.fit_trees_time = pd.DataFrame(self.fit_trees_time)
-        
-        # end_fit_trees = time.time()
-        # fit_forest_time = end_fit_trees - start_fit_trees
-        
-        # self.check_data_time = check_data_time
-        # self.fit_rf_time = fit_rf_time
-        # self.fit_forest_time = fit_forest_time
 
     def _fit_ith_tree(self, tree_model,i, X, y, sample_weight=None, **kwargs):
         """
@@ -282,11 +236,8 @@ class _RandomForestPlus(BaseEstimator):
         oob_indices: ndarray of shape (n_samples,)
             The out-of-bag indices for the tree model.
         """                
-        # start_ith_tree = time.time()
 
         n_samples = X.shape[0]  
-
-        # start_init_transformer = time.time()
         
         if self.add_transformers is None:
             if self.include_raw:
@@ -300,17 +251,13 @@ class _RandomForestPlus(BaseEstimator):
                 base_transformer_list = [TreeTransformer(tree_model)]
             transformer = CompositeTransformer(base_transformer_list + self.add_transformers,
                                             drop_features=self.drop_features)
-            
-        # end_init_transformer = time.time()
-        
+                    
         prediction_model = copy.deepcopy(self._initial_prediction_model)
         
         # get in-bag, oob sample indices 
         oob_indices = _generate_unsampled_indices(tree_model.random_state, n_samples, n_samples)
         inbag_indices = _generate_sample_indices(tree_model.random_state,n_samples,n_samples)
         unique_inbag_indices, counts_elements = np.unique(inbag_indices, return_counts=True)    
-
-        # start_get_transformed_data = time.time()
         
         # get transformed data
         X_inbag = copy.deepcopy(X)[inbag_indices]
@@ -319,8 +266,6 @@ class _RandomForestPlus(BaseEstimator):
         tree_X_train = tree_blocked_data.get_all_data()
         tree_y_train = copy.deepcopy(y)
         
-        # end_get_transformed_data = time.time()
-
         # get sample weights depending on fit on strategy
         tree_sample_weight = np.ones(len(tree_y_train))
 
@@ -355,24 +300,13 @@ class _RandomForestPlus(BaseEstimator):
         if self._is_gb:
             tree_sample_weight = None
 
-        # start_fit_prediction_model = time.time()
-
         if tree_inbag_blocked_data.get_all_data().shape[1] != 0:
             if evaluate_on is None:
                 prediction_model.fit(tree_X_train, tree_y_train, sample_weight=tree_sample_weight)
             else:
                 prediction_model.fit(tree_X_train, tree_y_train, sample_weight=tree_sample_weight,evaluate_on = evaluate_on)
-            
-                
-        # end_fit_prediction_model = time.time()
-        # end_ith_tree = time.time()
-        
-        # fit_trees_time = {"init_transformer": end_init_transformer - start_init_transformer,
-        #                           "get_transformed_data": end_get_transformed_data - start_get_transformed_data,
-        #                           "fit_prediction_model": end_fit_prediction_model - start_fit_prediction_model,
-        #                           "total_ith_tree": end_ith_tree - start_ith_tree}
 
-        return prediction_model, copy.deepcopy(transformer), tree_model.random_state,(i,oob_indices) #, fit_trees_time
+        return prediction_model, copy.deepcopy(transformer), tree_model.random_state, (i,oob_indices)
         
     def predict(self, X, tree_weights='uniform', n_jobs=1):
         """
@@ -502,42 +436,3 @@ class RandomForestPlusClassifier(_RandomForestPlus, ClassifierMixin):
             tree_weights = tree_weights/np.sum(tree_weights)
             predictions = np.average(np.vstack(predictions), axis=0,weights=tree_weights)
         return np.stack([1 - predictions, predictions]).T
-
-
-    
-# if __name__ == "__main__":
-
-#     random_state, num_train = 42, 500
-
-    #Test Regression
-    # task_id =  359946
-    # task = openml.tasks.get_task(task_id)
-    # dataset_id = task.dataset_id
-    # dataset = openml.datasets.get_dataset(dataset_id)
-    # X, y, categorical_indicator, attribute_names = dataset.get_data(target=dataset.default_target_attribute,dataset_format="array")
-
-    # rf = RandomForestRegressor(n_estimators=24, random_state=random_state,max_features=0.33,min_samples_leaf=10)
-    # rf_plus = RandomForestPlusRegressor(rf_model = rf, prediction_model=AloElasticNetRegressorCV(),fit_on = "all")
-    # rf_plus.fit(X[:num_train],y[:num_train])
-    # pprint.pprint(f"{r2_score(y[num_train:,],rf_plus.predict(X[num_train:]))}")
-
-
-
-    # #Test Classification
-    # X, y, f = imodels.get_clean_dataset("diabetes")
-    # pprint.pprint(f"X Shape: {X.shape}")
-    # X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
-
-
-    # # Fit a RFPlus model
-    # rf_model = RandomForestClassifier(n_estimators=10, min_samples_leaf=3,max_features='sqrt', random_state=42)
-    # rf_plus_model_all = RandomForestPlusClassifier(rf_model = rf_model, fit_on="all")
-    # rf_plus_model_all.fit(X_train[:100], y_train[:100])
-    
-    
-    # rf_plus_model_oob = RandomForestPlusClassifier(rf_model = rf_model, fit_on="oob")
-    # rf_plus_model_oob.fit(X_train[:100], y_train[:100])
-    
-
-
-    
